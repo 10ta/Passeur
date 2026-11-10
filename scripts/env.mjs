@@ -92,7 +92,7 @@ switch (cmd) {
     const { values } = readEnv();
     const commands = [
       ['help', '命令说明'], ['info', '用户信息（话题内）'], ['block', '拉黑（话题内）'], ['unblock', '解除拉黑（话题内）'],
-      ['settings', '设置面板（General 全局 / 话题内单独）'], ['newlist', '新建名单话题（发给多人）'], ['list', '名单面板（名单话题内）'], ['broadcast', '广播（General 里回复一条消息）'], ['cancel', '取消广播'], ['blocked', '拉黑列表'],
+      ['settings', '设置面板（全局 + 会话设置）'], ['newlist', '新建名单话题（发给多人）'], ['list', '名单面板（名单话题内）'], ['broadcast', '广播（General 里回复一条消息）'], ['cancel', '取消广播'], ['blocked', '拉黑列表'],
       ['stats', '统计'], ['check', '检查配置'], ['id', '显示聊天 ID'],
     ].map(([command, description]) => ({ command, description }));
     process.stdout.write(JSON.stringify({ scope: { type: 'chat', chat_id: Number(values.GROUP_ID) }, commands }));

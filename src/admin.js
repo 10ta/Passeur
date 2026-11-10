@@ -7,7 +7,7 @@ import { sendSingle, sendAlbumItem, syncEdit } from './relay.js';
 import { esc, userCard, HELP } from './text.js';
 import { runBroadcastBatch } from './broadcast.js';
 import { newList, showPanel, fanOut } from './lists.js';
-import { showSettings, keepForwardSource } from './settings.js';
+import { showSettings, keepForwardSource, rememberAdmin } from './settings.js';
 
 const SERVICE_KEYS = [
   'new_chat_members', 'left_chat_member', 'new_chat_title', 'new_chat_photo', 'delete_chat_photo',
@@ -56,6 +56,7 @@ export async function handleGroupMessage(app, msg) {
     return;
   }
   if (!isAdmin || msg.from.is_bot || isService(msg)) return;
+  await rememberAdmin(app, msg.from); // for hiding privacy-protected forwards from admins
 
   const threadId = msg.is_topic_message ? msg.message_thread_id : null;
   if (cmd) return handleCommand(app, msg, cmd, threadId);
@@ -192,6 +193,7 @@ async function selfCheck(app) {
 
   for (const id of cfg.adminIds) {
     const m = await tg.call('getChatMember', { chat_id: cfg.groupId, user_id: id }).catch(() => null);
+    if (m?.user) await rememberAdmin(app, m.user).catch(() => {});
     const inGroup = m && ['creator', 'administrator', 'member', 'restricted'].includes(m.status);
     if (!inGroup) { lines.push(`⚠️ 管理员 <code>${id}</code> 不在群里`); continue; }
     ok(!m.is_anonymous, `管理员 <code>${id}</code> 已就绪`, `管理员 <code>${id}</code> 开着“保持匿名”，消息会无法识别`);

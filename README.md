@@ -113,7 +113,7 @@ Open the guest's topic and write. Everything that is not a `/command` goes to th
 
 ### Forward something to a guest from account 1
 
-From any chat, **Forward** → pick the admin group → pick the guest's topic. The guest receives it like a normal forward, with "Forwarded from" the original source. Your own accounts never show: a message that originates from an admin account or the admin group is copied instead. To hide sources, change **Forward source** in `/settings` (globally or for one topic).
+From any chat, **Forward** → pick the admin group → pick the guest's topic. The guest receives it like a normal forward, with "Forwarded from" the original source. Your own accounts never show: a message that originates from any admin account or the admin group is copied instead, including admins whose forward privacy hides their account (matched by name). To hide sources, change **Forward source** in `/settings` (globally or for one session).
 
 ### Reply to a specific message
 
@@ -131,7 +131,7 @@ Guest topics always stay one-to-one, because a guest's replies come back to thei
 
 ### Change settings
 
-Send `/settings` in **General** for the global panel, or inside any topic (a guest's or a list) for that topic alone. Each button cycles through the options and saves at once; the panel shows where each value comes from (topic, panel, `.env` or default). Choosing **默认 / 跟随全局** removes the override.
+Send `/settings` in **General**. The panel shows the global settings; **💬 会话设置** opens a list of sessions (list topics first, then guests by recent activity, 20 per page, ⚙️ marks those with their own settings), and picking one shows that session's settings. Everything happens by editing that one message in General, so you never type inside a guest's topic. Each button cycles through the options and saves at once; the panel shows where each value comes from (session, global, `.env` or default). Choosing **默认 / 跟随全局** removes the override.
 
 | Setting | Global | Per topic | Options |
 |---|---|---|---|
@@ -146,7 +146,7 @@ Send `/settings` in **General** for the global panel, or inside any topic (a gue
 |---|---|---|
 | `/info` | guest topic | Guest's name, username, ID and status |
 | `/block` / `/unblock` | guest topic | Silently drop / accept the guest's messages |
-| `/settings` | General, or any topic | Global settings panel, or that topic's own settings |
+| `/settings` | General | Settings panel: global, and per session under 💬 会话设置 |
 | `/newlist <name>` | anywhere in the group | Create a list topic `📤 <name>` with its member panel |
 | `/list` | list topic | Post the member panel again |
 | `/broadcast` | General, as a reply | Send the replied message to every verified, unblocked guest |
@@ -302,7 +302,7 @@ npm run build
 
 | Fact | Status | How to confirm |
 |---|---|---|
-| When the bot forwards a message that was itself forwarded, the guest sees the original source, not the admin group | assumed | Forward a channel post into a topic, check the guest's view |
+| When the bot forwards a message that was itself forwarded, the guest sees the original source, not the admin group | confirmed 2026-11-10 | — |
 | Telegram returns `TOPIC_CLOSED` when the bot posts into a closed topic | assumed; Passeur reopens the topic | Close a topic, message the bot from that guest |
 | D1 bills an extra row written per index touched | assumed from docs | `meta.rows_written` of a message insert in Workers Logs |
 

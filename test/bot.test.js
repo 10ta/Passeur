@@ -612,7 +612,8 @@ test('/settings in General shows global settings with their source', async () =>
   assert.match(p.text, /转发来源<\/b>：保留（默认）/);
   assert.match(p.text, /新访客验证<\/b>：关（\.env）/);
   assert.deepEqual(p.reply_markup.inline_keyboard.map((r) => r[0].callback_data),
-    ['st:g:forward_source', 'st:g:verify', 'st:g:rate_limit', 'st:g:retention_days']);
+    ['st:g:forward_source', 'st:g:verify', 'st:g:rate_limit', 'st:g:retention_days', 'st:s:0']);
+  assert.equal(p.reply_markup.inline_keyboard[1][0].text, '新访客验证：关（.env） ▸', 'button shows the effective value');
 });
 
 test('global panel cycles values, overrides .env, and "默认" falls back again', async () => {
@@ -621,7 +622,7 @@ test('global panel cycles values, overrides .env, and "默认" falls back again'
   assert.equal(s.tg.of('copyMessage').length, 3, '.env limit applies');
   await stCb(s, 'g', 'rate_limit'); // -> 10
   assert.equal(s.row("SELECT value FROM settings WHERE scope = 'g' AND key = 'rate_limit'").value, '10');
-  assert.match(s.tg.of('editMessageText').at(-1).params.text, /访客限速<\/b>：10 条\/分（面板）/);
+  assert.match(s.tg.of('editMessageText').at(-1).params.text, /访客限速<\/b>：10 条\/分（全局）/);
   s.tg.clear();
   await s.send(guest(3101));
   assert.equal(s.tg.of('copyMessage').length, 1, 'panel value wins over .env');
@@ -646,7 +647,7 @@ test('topic panel: only topic-scoped settings; topic override beats global', asy
   await s.send(inTopic(500, ADMIN1, cmd('/settings')));
   const p = s.tg.of('sendMessage')[0].params;
   assert.equal(p.message_thread_id, 500);
-  assert.deepEqual(p.reply_markup.inline_keyboard.map((r) => r[0].callback_data), ['st:500:forward_source']);
+  assert.deepEqual(p.reply_markup.inline_keyboard.map((r) => r[0].callback_data), ['st:500:forward_source', 'st:s:0']);
   assert.match(p.reply_markup.inline_keyboard[0][0].text, /跟随全局/);
 
   const fwd = { forward_origin: { type: 'user', sender_user: { id: 5 } } };
@@ -691,4 +692,99 @@ test('retention from the panel drives the cron cleanup', async () => {
   s.d1.raw.exec("INSERT INTO settings VALUES ('g', 'retention_days', '30')");
   await worker.scheduled({ scheduledTime: Date.UTC(2026, 0, 1, 3, 0) }, s.env, { waitUntil() {} });
   assert.equal(s.rows('SELECT * FROM msg_map').length, 1);
+});
+
+// ---------------------------------------------------------------- settings navigation (all from General)
+
+/** Presses a settings button on one General message; returns that message's current view. */
+function generalPanel(s) {
+  const view = { ...s.tg.of('sendMessage').at(-1).params };
+  return {
+    view,
+    async press(data, from = ADMIN1) {
+      await s.send({ callback_query: { id: 'q', from: { id: from }, data,
+        message: { message_id: 6666, chat: { id: GROUP, type: 'supergroup' } } } });
+      const e = s.tg.of('editMessageText').at(-1);
+      if (e) Object.assign(view, e.params);
+      return view;
+    },
+    buttons: () => view.reply_markup.inline_keyboard.flat().map((b) => [b.text, b.callback_data]),
+  };
+}
+
+test('session settings are reached from General: list -> session -> cycle -> back', async () => {
+  const s = setup();
+  for (const id of [4101, 4102]) await s.send(guest(id));
+  await listSetup(s, [], 'VIP');
+  const t = s.row("SELECT topic_id FROM lists WHERE name = 'VIP'").topic_id;
+  s.tg.clear();
+  await s.send(inGeneral(ADMIN1, cmd('/settings')));
+  const g = generalPanel(s);
+  assert.equal(g.view.message_thread_id, undefined, 'panel lives in General');
+
+  await g.press('st:s:0');
+  const list = g.buttons();
+  assert.deepEqual(list[0], ['📤 VIP', `st:o:${t}`], 'lists first');
+  assert.deepEqual(list.slice(1, 3).map(([, d]) => d).sort(), ['st:o:500', 'st:o:501']);
+  assert.ok(list.some(([txt, d]) => d === 'st:o:500' && txt === '👤 Guest4101'));
+
+  await g.press('st:o:500');
+  assert.match(g.view.text, /会话设置：👤 Guest4101/);
+  await g.press('st:500:forward_source'); // -> all (explicit)
+  await g.press('st:500:forward_source'); // -> channel
+  assert.equal(s.row("SELECT value FROM settings WHERE scope = 't:500'").value, 'channel');
+  assert.match(g.view.text, /转发来源<\/b>：仅频道（本会话）/);
+
+  await g.press('st:s:0');
+  assert.ok(g.buttons().some(([txt, d]) => d === 'st:o:500' && txt === '⚙️ 👤 Guest4101'), 'override marked');
+  await g.press('st:h');
+  assert.match(g.view.text, /⚙️ 全局设置/);
+  assert.equal(s.tg.of('sendMessage').length, 1, 'navigation edits one message, never posts in topics');
+});
+
+test('session list pages by 20', async () => {
+  const s = setup();
+  const ins = s.d1.raw.prepare('INSERT INTO users (user_id, name, verified, topic_id, created_at) VALUES (?, ?, 1, ?, ?)');
+  for (let i = 0; i < 25; i++) ins.run(6000 + i, `p${i}`, 7000 + i, i);
+  await s.send(inGeneral(ADMIN1, cmd('/settings')));
+  const g = generalPanel(s);
+  await g.press('st:s:0');
+  let b = g.buttons();
+  assert.equal(b.filter(([, d]) => d.startsWith('st:o:')).length, 20);
+  assert.ok(b.some(([, d]) => d === 'st:s:1'));
+  await g.press('st:s:1');
+  b = g.buttons();
+  assert.equal(b.filter(([, d]) => d.startsWith('st:o:')).length, 5);
+  assert.ok(b.some(([, d]) => d === 'st:s:0') && !b.some(([, d]) => d === 'st:s:2'));
+});
+
+test('privacy-hidden forwards from any admin are copied, others keep their name', async () => {
+  const s = setup();
+  await s.send(guest(4201));
+  // Admin 2 has spoken in the group once, so their name is known.
+  await s.send(inGeneral(ADMIN2, { text: 'hi', from: { id: ADMIN2, is_bot: false, first_name: 'Second', last_name: 'Acct' } }));
+  const hidden = (name) => ({ forward_origin: { type: 'hidden_user', sender_user_name: name } });
+  const run = async (name, from) => {
+    s.tg.clear();
+    const m = inTopic(500, ADMIN1, hidden(name));
+    if (from) m.message.from = from;
+    await s.send(m);
+    return s.tg.of('forwardMessage').length ? 'forward' : 'copy';
+  };
+  assert.equal(await run('Second Acct'), 'copy', 'another admin, known by name');
+  assert.equal(await run('Admin'), 'copy', 'the sender themself');
+  assert.equal(await run('Some Stranger'), 'forward');
+  // A rename is picked up from the next message.
+  await s.send(inGeneral(ADMIN2, { text: 'hi', from: { id: ADMIN2, is_bot: false, first_name: 'Renamed' } }));
+  assert.equal(await run('Renamed'), 'copy');
+  assert.equal(s.rows("SELECT * FROM settings WHERE scope = 'a'").length, 2);
+});
+
+test('/check also records admin names', async () => {
+  const s = setup();
+  const orig = s.tg.call;
+  s.tg.call = async (m, p) => (m === 'getChatMember' && p.user_id === ADMIN2
+    ? { status: 'administrator', is_anonymous: false, user: { id: ADMIN2, first_name: 'Two' } } : orig(m, p));
+  await s.send(inGeneral(ADMIN1, cmd('/check')));
+  assert.equal(s.row("SELECT value FROM settings WHERE scope = 'a' AND key = ?", String(ADMIN2)).value, 'Two');
 });

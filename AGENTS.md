@@ -27,7 +27,7 @@ There is no linter; match the existing style.
 - `src/admin.js` — the admin forum group: relay topic → guest, commands, `/check`, delivery error reports.
 - `src/relay.js` — `sendSingle`, `sendAlbumItem`, topic create/recover, `syncEdit`. Shared by both directions via a `route` object.
 - `src/lists.js` — list topics: `/newlist`, member panel (`lm:<topic>:<user>` callbacks, saved on each tap), `fanOut` to members.
-- `src/settings.js` — `SETTINGS` registry, `getSetting(app, key, topicId?)`, `keepForwardSource`, `/settings` panel (`st:<g|topic>:<key>` callbacks).
+- `src/settings.js` — `SETTINGS` registry, `getSetting(app, key, topicId?)`, `keepForwardSource`, `/settings` panel, driven from one General message: `st:h` global, `st:s:<page>` session list, `st:o:<topic>` session panel, `st:<g|topic>:<key>` cycle.
 - `src/db.js` — the only place with SQL. `src/telegram.js` — Bot API client and `TgError` classifiers.
 - `migrations/` — D1 schema; add the next numbered file (`0004_*.sql`), never edit an applied migration.
 - `scripts/env.mjs` — `.env` read/write and JSON bodies for `update.sh`.
@@ -91,9 +91,11 @@ There is no linter; match the existing style.
 - `ensureTopic` can fail (wrong `GROUP_ID`, lost Manage Topics): it must stay inside the guest's error handling so the guest is told, since the admin notice goes to the same unreachable group.
 - `node -e … "$value"` treats a negative number like `-100123` as a node option; pass values through files or `scripts/env.mjs`.
 - The fake D1 batch returns `results` only for statements starting with `SELECT`, like D1.
-- Forwarding keeps "Forwarded from" (default `forward_source = all`); `keepForwardSource` must keep copying messages whose origin is an admin account or the admin group, or the admins are revealed.
+- Forwarding keeps "Forwarded from" (default `forward_source = all`); `keepForwardSource` must keep copying messages whose origin is any admin account or the admin group, or the admins are revealed.
+- Admins with forward privacy appear as `hidden_user` (name only). `rememberAdmin` stores each admin's display name (settings scope `a`, written only on change) on every admin message and on `/check`; `keepForwardSource` copies when the hidden name matches one of them or the sender.
 - Legacy `FORWARD_CHANNEL_POSTS`: only `1` means anything (= `channel`); `0` was the old template default and must stay ignored, or it would override the new `all` default in existing `.env` files.
 
 ## Current focus
 
-- 2026-11-10: first version. Open items: confirm the three "assumed" rows in README → Limitations on the live bot.
+- 2026-11-10: first version. Forwarded-origin row confirmed on the live bot; two "assumed" rows remain in README → Limitations.
+- Considered, not built: read receipts (Bot API has no read status for bot messages; an inferred "seen" mark when the guest next writes would be ~40 lines; not requested yet).

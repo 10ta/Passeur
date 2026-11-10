@@ -118,6 +118,17 @@ export function createDb(d1) {
       return Object.fromEntries(rows.map((r) => [r.key, r.value]));
     },
     setSetting: (scope, key, value) => run('INSERT OR REPLACE INTO settings (scope, key, value) VALUES (?, ?, ?)', scope, key, value),
+    /** Insert or update, writing nothing when the value is unchanged. */
+    upsertSetting: (scope, key, value) => run(
+      `INSERT INTO settings (scope, key, value) VALUES (?, ?, ?)
+       ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value WHERE settings.value <> excluded.value`,
+      scope, key, value),
+    /** Topic ids that have their own settings (range scan on the primary key). */
+    async topicsWithSettings() {
+      const rows = await all("SELECT DISTINCT scope FROM settings WHERE scope >= 't:' AND scope < 't;'");
+      return new Set(rows.map((r) => Number(r.scope.slice(2))));
+    },
+    allLists: () => all('SELECT topic_id, name FROM lists ORDER BY created_at'),
     deleteSetting: (scope, key) => run('DELETE FROM settings WHERE scope = ? AND key = ?', scope, key),
 
     // ---- list topics ----
@@ -130,10 +141,10 @@ export function createDb(d1) {
     addMember: (topicId, userId) => run('INSERT OR IGNORE INTO list_members (topic_id, user_id) VALUES (?, ?)', topicId, userId),
     removeMember: (topicId, userId) => run('DELETE FROM list_members WHERE topic_id = ? AND user_id = ?', topicId, userId),
     /** Guests with a topic, most recently active first (panel only; not a per-message query). */
-    recentGuests: (limit) => all(
-      `SELECT u.user_id, u.name, u.blocked FROM users u WHERE u.topic_id > 0
-       ORDER BY COALESCE((SELECT MAX(m.created_at) FROM msg_map m WHERE m.guest_id = u.user_id), u.created_at) DESC
-       LIMIT ?`, limit),
+    recentGuests: (limit, offset = 0) => all(
+      `SELECT u.user_id, u.name, u.blocked, u.topic_id FROM users u WHERE u.topic_id > 0
+       ORDER BY COALESCE((SELECT MAX(m.created_at) FROM msg_map m WHERE m.guest_id = u.user_id), u.created_at) DESC, u.user_id
+       LIMIT ? OFFSET ?`, limit, offset),
     listBlocked: (limit) => all('SELECT user_id, name, username FROM users WHERE blocked = 1 ORDER BY user_id LIMIT ?', limit),
 
     async cleanup(retentionDays) {
