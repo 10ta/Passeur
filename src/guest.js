@@ -6,7 +6,6 @@ import { displayName, topicName, T } from './text.js';
 import { ensureTopic, recreateTopic, sendSingle, sendAlbumItem, syncEdit } from './relay.js';
 import { parseCommand } from './commands.js';
 import { getSetting, rememberAdmin } from './settings.js';
-import { markSeen } from './receipts.js';
 
 const CAPTCHA_TTL = 600; // a challenge older than this is replaced on the next message
 const CAPTCHA_MAX_FAILS = 3;
@@ -54,7 +53,6 @@ export async function handleGuestMessage(app, msg) {
 
   await refreshProfile(app, from, user);
   await relayToTopic(app, msg, from, user);
-  await markSeen(app, user);
 }
 
 /** Relays a guest message (or a pending message id after captcha) into the topic. */

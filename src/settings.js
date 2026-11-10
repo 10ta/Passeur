@@ -14,9 +14,10 @@ export const SETTINGS = [
     help: '转发来的消息发给访客时，是否保留“转发自…”。来源是任一管理员账号（含开了转发隐私的）或本群时，总是隐藏。',
   },
   {
-    key: 'receipts', label: '送达标记', env: 'RECEIPTS', def: '1', scopes: ['global', 'topic'], flag: true,
-    options: [['1', '开'], ['0', '关']],
-    help: '只标在你发给访客的最近一条消息上：👌 已送达，👀 对方之后又发了消息（推断已读）。',
+    key: 'receipts', label: '送达回执', env: 'RECEIPTS', def: 'fail', scopes: ['global', 'topic'],
+    options: [['fail', '仅失败时提醒'], ['off', '不提醒']],
+    legacy: { 1: 'fail', true: 'fail', on: 'fail', 0: 'off', false: 'off' }, // values from the earlier 👌/👀 version
+    help: '发送成功不打扰；发送失败时在话题里回一条说明原因。「不提醒」时失败也只记日志。',
   },
   {
     key: 'verify', label: '新访客验证', env: 'VERIFY', def: '1', scopes: ['global'], flag: true,
@@ -46,6 +47,7 @@ function envValue(env, def) {
     raw = 'channel'; // legacy key from the first version; "0" there was just the old default, so it is ignored
   }
   if (!raw) return null;
+  if (def.legacy?.[raw]) raw = def.legacy[raw];
   if (def.flag) return FLAG_TRUE.includes(raw) ? '1' : FLAG_FALSE.includes(raw) ? '0' : null;
   if (def.options.some(([v]) => v === raw)) return raw;
   return /^\d+$/.test(raw) && def.key !== 'forward_source' ? raw : null; // e.g. RATE_LIMIT_PER_MIN=15
@@ -90,12 +92,13 @@ function scopeRows(app, scope) {
 /** Effective value and where it came from: 'topic' | 'global' | 'env' | 'default'. */
 export async function resolveSetting(app, key, topicId) {
   const def = BY_KEY[key];
+  const norm = (v) => def.legacy?.[v] ?? v;
   if (topicId && def.scopes.includes('topic')) {
     const v = (await scopeRows(app, scopeId(topicId)))[key];
-    if (v != null) return { value: v, source: 'topic' };
+    if (v != null) return { value: norm(v), source: 'topic' };
   }
   const g = (await scopeRows(app, 'g'))[key];
-  if (g != null) return { value: g, source: 'global' };
+  if (g != null) return { value: norm(g), source: 'global' };
   const e = envValue(app.env, def);
   if (e != null) return { value: e, source: 'env' };
   return { value: def.def, source: 'default' };
@@ -242,7 +245,8 @@ export async function handleSettingsCallback(app, cq) {
   const topicId = m[1] === 'g' ? 0 : Number(m[1]);
   if (!def.scopes.includes(topicId ? 'topic' : 'global')) return answer();
   const scope = scopeId(topicId);
-  const current = (await db.getSettings(scope))[def.key] ?? null;
+  const stored = (await db.getSettings(scope))[def.key] ?? null;
+  const current = stored == null ? null : (def.legacy?.[stored] ?? stored);
   const cycle = [null, ...def.options.map(([v]) => v)];
   const next = cycle[(cycle.indexOf(current) + 1) % cycle.length];
   if (next == null) await db.deleteSetting(scope, def.key);

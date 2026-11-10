@@ -3,13 +3,13 @@
 // keep their own path in admin.js (reply threading, edit sync, inbound).
 //
 // Budget: one fan-out copies to each member with 1 Bot API call, plus 1 for
-// the 👌 reaction or the report, so MAX_MEMBERS = 45 stays within the Free
+// the failure report, so MAX_MEMBERS = 45 stays within the Free
 // plan's 50 external subrequests per invocation (albums: copyMessages, same).
 
 import { TgError } from './telegram.js';
 import { esc } from './text.js';
 import { bufferAlbum } from './relay.js';
-import { keepForwardSource } from './settings.js';
+import { keepForwardSource, getSetting } from './settings.js';
 
 export const MAX_MEMBERS = 45;
 const RECENT = 30;
@@ -124,12 +124,9 @@ async function deliverAll(app, msg, members, ids, forward) {
       failed.push(`${m.name}（${err instanceof TgError && err.recipientGone ? '已屏蔽 bot' : '发送失败'}）`);
     }
   }
-  if (sent === members.length) {
-    await tg.call('setMessageReaction', {
-      chat_id: cfg.groupId, message_id: ids[0], reaction: [{ type: 'emoji', emoji: '👌' }],
-    }).catch((err) => console.error('reaction failed', err.message));
-    return;
-  }
+  if (sent === members.length) return; // success is silent
+  console.error(`fan-out: ${sent}/${members.length} delivered`);
+  if ((await getSetting(app, 'receipts', msg.message_thread_id)) === 'off') return;
   const lines = [`📤 已发送 ${sent}/${members.length} 人`];
   if (failed.length) lines.push(`未送达：${failed.join('、')}`);
   if (stoppedAt) lines.push(`⚠️ 触发 Telegram 限流，从「${stoppedAt.name}」起未发送，请稍后重发这条。`);

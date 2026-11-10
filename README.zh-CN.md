@@ -111,7 +111,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 
 打开该访客的话题直接写。只要不是 `/命令`，都会发给访客：文字、媒体、贴纸、语音、相册。两个管理员号都能在同一个话题里回复。
 
-你在话题里的最近一条消息上会带一个标记：👌 表示已送达，👀 表示对方之后又发过消息。Telegram 不告诉 bot 对方是否已读，所以 👀 只是推断；标记只保留在最近一条上，你再发新消息时它会移过去。
+送达成功时不打扰你。消息发不出去时（对方屏蔽了 bot、触发 Telegram 限流、受保护内容等），bot 会在话题里回复这条消息并说明原因。在 `/settings` 里把**送达回执**设为“不提醒”，连失败也不再提示。
 
 ### 用号1 把内容转给访客
 
@@ -127,7 +127,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 
 1. `/newlist 客户` 会新建话题 `📤 客户`，并在里面贴出面板。勾选访客（☐/☑），每点一下立即保存，最多 45 人。在该话题里发 `/list` 可以重新调出面板。
 2. 往 `📤 客户` 里发或转发任何内容（文字、媒体、相册），都会复制给名单上没被拉黑的每个人。
-3. 全部送达时，你的消息上会出现 👌；否则 bot 会回复一条，列出谁没收到以及原因。
+3. 全部送达时没有任何提示；否则 bot 会回复一条，列出谁没收到以及原因。
 
 访客话题始终是一对一的，因为访客的回复总是回到他自己的话题。两个管理员号之间的商量不要放在名单话题里：那里的每条消息都会发出去。
 
@@ -142,7 +142,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 | 转发来源 | ✅ | ✅ | 保留（默认）· 仅频道 · 隐藏 |
 | 新访客验证 | ✅ | ❌ | 开（默认）· 关 |
 | 访客限速 | ✅ | ❌ | 每分钟 10 · 20（默认）· 60 · 不限 |
-| 送达标记（👌/👀） | ✅ | ✅ | 开（默认）· 关 |
+| 送达回执 | ✅ | ✅ | 仅失败时提醒（默认）· 不提醒 |
 | 消息对应保留 | ✅ | ❌ | 30 · 90（默认）· 365 天 |
 
 ### 命令
@@ -181,7 +181,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 | `RATE_LIMIT_PER_MIN` | ❌ | `20` | 每位访客每分钟消息数上限；`0` 为关闭 |
 | `FORWARD_SOURCE` | ❌ | `all` | `all` / `channel` / `none`：转发来的消息是否保留“转发自”（旧的 `FORWARD_CHANNEL_POSTS=1` 等同 `channel`） |
 | `RETENTION_DAYS` | ❌ | `90` | 消息之间的回复 / 编辑对应关系保留天数 |
-| `RECEIPTS` | ❌ | `1` | 访客话题里最近一条消息上的 👌/👀 标记 |
+| `RECEIPTS` | ❌ | `fail` | `fail`：只在发送失败时在话题里回复 · `off`：从不提醒 |
 
 ## 🔄 更新与维护
 
@@ -263,7 +263,6 @@ flowchart LR
 │   ├── broadcast.js   # Batched broadcast
 │   ├── lists.js       # List topics: member panel, fan-out
 │   ├── settings.js    # Settings registry, resolution, /settings panel
-│   ├── receipts.js    # 👌/👀 marks on the latest admin message
 │   ├── db.js          # All D1 queries
 │   └── telegram.js    # Bot API client
 ├── migrations/        # D1 schema
@@ -307,7 +306,6 @@ npm run build
 - 编辑同步只覆盖文字和图片说明；替换图片不会同步。
 - 访客在通过验证前发的消息只保留第一条（相册最多保留其中一项）。
 - 广播只发一条消息；回复的是相册时只广播第一项。
-- 送达标记：👀 表示对方在你之后发过消息，不等于已读；只保留在最近一条消息上。
 - 名单话题：每个名单最多 45 人（每人占 1 次 Bot API 调用，免费版每次调用上限 50）；不做编辑同步；访客回复名单消息时，回复会进他的话题，但不显示“回复了哪条”。
 - 管理员以 `/` 开头的文字会被当作命令，不会发出。
 - 单个访客刷屏时，即使消息被丢弃，每条仍会消耗一次 Worker 请求。

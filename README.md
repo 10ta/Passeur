@@ -111,7 +111,7 @@ Add a route or custom domain to the Worker in the Cloudflare dashboard, set `WOR
 
 Open the guest's topic and write. Everything that is not a `/command` goes to the guest: text, media, stickers, voice, albums. Both admin accounts can reply in the same topic.
 
-Your latest message in the topic carries a mark: 👌 once it reached the guest, 👀 once the guest has written anything since. Telegram tells bots nothing about reading, so 👀 is an inference, and only the latest message is marked (the mark moves when you send again).
+Delivery is silent when it works. If a message can't be delivered (the guest blocked the bot, Telegram rate limit, protected content…), the bot replies under it in the topic with the reason. Set **送达回执** to 不提醒 in `/settings` to silence even that.
 
 ### Forward something to a guest from account 1
 
@@ -127,7 +127,7 @@ A topic is a recipient list: a guest's own topic reaches that one guest, a **lis
 
 1. `/newlist Clients` creates the topic `📤 Clients` with a panel inside. Tick guests (☐/☑); each tap is saved at once, up to 45 people. `/list` in that topic brings the panel back.
 2. Post or forward anything into `📤 Clients` — text, media, albums. It is copied to every member who isn't blocked.
-3. 👌 appears on your message when everyone got it; otherwise the bot replies with who didn't and why.
+3. Nothing happens when everyone got it; otherwise the bot replies with who didn't and why.
 
 Guest topics always stay one-to-one, because a guest's replies come back to their own topic. Keep conversations between your admin accounts out of list topics: every message there is sent.
 
@@ -142,7 +142,7 @@ Send `/settings` in **General**. The panel shows the global settings; **💬 会
 | Forward source | ✅ | ✅ | keep (default) · channels only · hide |
 | New-guest captcha | ✅ | ❌ | on (default) · off |
 | Guest rate limit | ✅ | ❌ | 10 · 20 (default) · 60 per minute · off |
-| Delivery marks (👌/👀) | ✅ | ✅ | on (default) · off |
+| Delivery receipts | ✅ | ✅ | failures only (default) · off |
 | Message-link retention | ✅ | ❌ | 30 · 90 (default) · 365 days |
 
 ### Commands
@@ -181,7 +181,7 @@ Connection settings live in `.env` (template: [`.env.example`](.env.example)); `
 | `RATE_LIMIT_PER_MIN` | ❌ | `20` | Messages per guest per minute; `0` = off |
 | `FORWARD_SOURCE` | ❌ | `all` | `all` / `channel` / `none`: keep "Forwarded from" for forwarded messages (legacy `FORWARD_CHANNEL_POSTS=1` = `channel`) |
 | `RETENTION_DAYS` | ❌ | `90` | How long reply/edit links between messages are kept |
-| `RECEIPTS` | ❌ | `1` | 👌/👀 marks on your latest message in a guest topic |
+| `RECEIPTS` | ❌ | `fail` | `fail`: reply in the topic only when a delivery fails · `off`: never |
 
 ## 🔄 Update & Maintenance
 
@@ -263,7 +263,6 @@ The cron adds 288 requests/day. On the free plan the first limit you'd reach is 
 │   ├── broadcast.js   # Batched broadcast
 │   ├── lists.js       # List topics: member panel, fan-out
 │   ├── settings.js    # Settings registry, resolution, /settings panel
-│   ├── receipts.js    # 👌/👀 marks on the latest admin message
 │   ├── db.js          # All D1 queries
 │   └── telegram.js    # Bot API client
 ├── migrations/        # D1 schema
@@ -307,7 +306,6 @@ npm run build
 - Edits sync text and captions only; replacing a photo is not mirrored.
 - A guest's message sent before passing the captcha is kept only if it was the first one (one album item at most).
 - Broadcast sends a single message; a replied-to album broadcasts its first item.
-- Delivery marks: 👀 means the guest wrote after your message, not that they read it; marks are kept on the latest message only.
 - List topics: at most 45 members (one Bot API call each within the free plan's 50 per invocation); edits are not synced; a guest's reply to a list message lands in their topic without the reply link.
 - Admin text starting with `/` is treated as a command, not sent.
 - A flood from one guest still costs one Worker request per message even when dropped.

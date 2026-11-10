@@ -7,8 +7,7 @@ import { sendSingle, sendAlbumItem, syncEdit } from './relay.js';
 import { esc, userCard, HELP, displayName } from './text.js';
 import { runBroadcastBatch } from './broadcast.js';
 import { newList, showPanel, fanOut } from './lists.js';
-import { showSettings, keepForwardSource, rememberAdmin } from './settings.js';
-import { markDelivered } from './receipts.js';
+import { showSettings, keepForwardSource, rememberAdmin, getSetting } from './settings.js';
 
 const SERVICE_KEYS = [
   'new_chat_members', 'left_chat_member', 'new_chat_title', 'new_chat_photo', 'delete_chat_photo',
@@ -95,7 +94,6 @@ async function relayToGuest(app, msg, user) {
     forward: await keepForwardSource(app, msg, user.topic_id),
     replyTo,
     mapRow: (src, dst) => ({ guestId: user.user_id, guestMsgId: dst, topicMsgId: src, dir: DIR_OUT }),
-    onSent: (srcId) => markDelivered(app, user, srcId),
   };
   const onError = (err) => reportDelivery(app, msg, err);
   try {
@@ -107,14 +105,13 @@ async function relayToGuest(app, msg, user) {
 }
 
 async function reportDelivery(app, msg, err) {
+  console.error('relay to guest failed', err.message);
+  if ((await getSetting(app, 'receipts', msg.message_thread_id)) === 'off') return;
   let text;
   if (err instanceof TgError && err.recipientGone) text = '⚠️ 未送达：对方已屏蔽 bot 或已注销账号。';
   else if (err instanceof TgError && err.code === 429) text = `⚠️ 未送达：触发 Telegram 限流，请 ${err.parameters.retry_after ?? '稍'} 秒后重发。`;
   else if (err instanceof TgError && /can't be (copied|forwarded)|protected/i.test(err.description)) text = '⚠️ 未送达：这条消息无法复制（受保护内容或不支持的类型）。';
-  else {
-    console.error('relay to guest failed', err.message);
-    text = `⚠️ 未送达：${esc(err.message)}`;
-  }
+  else text = `⚠️ 未送达：${esc(err.message)}`;
   await replyIn(app, msg, text).catch((e) => console.error('report failed', e.message));
 }
 

@@ -468,7 +468,7 @@ async function listSetup(s, guestIds, name = '客户') {
   await s.send(inGeneral(ADMIN1, { text: `/newlist ${name}`, entities: cmdEntities('/newlist') }));
   const topic = s.tg.of('createForumTopic')[0];
   assert.equal(topic.params.name, `📤 ${name}`);
-  return 500 + guestIds.length; // fake thread ids are sequential
+  return s.row('SELECT topic_id FROM lists ORDER BY created_at DESC, topic_id DESC LIMIT 1').topic_id;
 }
 const listCb = (s, topicId, userId, from = ADMIN1) => s.send({ callback_query: {
   id: 'q', from: { id: from }, data: `lm:${topicId}:${userId}`,
@@ -516,7 +516,7 @@ test('list is capped at 45 members', async () => {
   assert.match(a.text, /最多 45/);
 });
 
-test('a message in a list topic goes to every non-blocked member; 👌 on success', async () => {
+test('a message in a list topic goes to every non-blocked member; success is silent', async () => {
   const s = setup();
   const t = await listSetup(s, [2401, 2402, 2403]);
   for (const id of [2401, 2402, 2403]) await listCb(s, t, id);
@@ -528,7 +528,7 @@ test('a message in a list topic goes to every non-blocked member; 👌 on succes
   const copies = s.tg.of('copyMessage');
   assert.deepEqual(copies.map((c) => c.params.chat_id).sort(), [2401, 2402]);
   assert.ok(copies.every((c) => c.params.from_chat_id === GROUP && c.params.message_id === m.message.message_id));
-  assert.equal(s.tg.of('setMessageReaction')[0].params.message_id, m.message.message_id);
+  assert.equal(s.tg.of('setMessageReaction').length, 0);
   assert.equal(s.tg.of('sendMessage').length, 0, 'no report when all succeed');
   assert.equal(s.rows('SELECT * FROM msg_map WHERE topic_msg_id = ?', m.message.message_id).length, 0);
 });
@@ -568,7 +568,7 @@ test('an album in a list topic goes to each member as one group', async () => {
   const groups = s.tg.of('copyMessages');
   assert.deepEqual(groups.map((c) => c.params.chat_id).sort(), [2601, 2602]);
   assert.ok(groups.every((c) => JSON.stringify(c.params.message_ids) === JSON.stringify(ids)));
-  assert.equal(s.tg.of('setMessageReaction').length, 1);
+  assert.equal(s.tg.of('setMessageReaction').length, 0);
 });
 
 test('guest topics are unaffected and a list topic never receives guest messages', async () => {
@@ -715,8 +715,7 @@ function generalPanel(s) {
 test('session settings are reached from General: list -> session -> cycle -> back', async () => {
   const s = setup();
   for (const id of [4101, 4102]) await s.send(guest(id));
-  await listSetup(s, [], 'VIP');
-  const t = s.row("SELECT topic_id FROM lists WHERE name = 'VIP'").topic_id;
+  const t = await listSetup(s, [], 'VIP');
   s.tg.clear();
   await s.send(inGeneral(ADMIN1, cmd('/settings')));
   const g = generalPanel(s);
@@ -789,60 +788,66 @@ test('/check also records admin names', async () => {
   assert.equal(s.row("SELECT value FROM settings WHERE scope = 'a' AND key = ?", String(ADMIN2)).value, 'Two');
 });
 
-// ---------------------------------------------------------------- receipts
+// ---------------------------------------------------------------- receipts (failure-only)
 
-const reactions = (s) => s.tg.of('setMessageReaction').map((c) => [c.params.message_id, c.params.reaction.map((r) => r.emoji).join('') || '∅']);
-
-test('receipts: 👌 moves to the latest admin message; 👀 once the guest writes', async () => {
+test('receipts: success is silent, failures are reported in the topic', async () => {
   const s = setup();
   await s.send(guest(5101));
   s.tg.clear();
-  const a1 = inTopic(500, ADMIN1);
-  await s.send(a1);
-  assert.deepEqual(reactions(s), [[a1.message.message_id, '👌']]);
-  const a2 = inTopic(500, ADMIN2);
-  s.tg.clear();
-  await s.send(a2);
-  assert.deepEqual(reactions(s), [[a1.message.message_id, '∅'], [a2.message.message_id, '👌']], 'old mark cleared');
-  s.tg.clear();
+  await s.send(inTopic(500, ADMIN1));
   await s.send(guest(5101));
-  assert.deepEqual(reactions(s), [[a2.message.message_id, '👀']]);
-  s.tg.clear();
-  await s.send(guest(5101));
-  assert.deepEqual(reactions(s), [], '👀 is set only once');
-  const a3 = inTopic(500, ADMIN1);
-  s.tg.clear();
-  await s.send(a3);
-  assert.deepEqual(reactions(s), [[a2.message.message_id, '∅'], [a3.message.message_id, '👌']]);
+  assert.equal(s.tg.of('setMessageReaction').length, 0, 'no marks at all');
+  assert.equal(s.tg.of('sendMessage').length, 0);
+  s.tg.failNext('copyMessage', 403, 'Forbidden: bot was blocked by the user');
+  await s.send(inTopic(500, ADMIN1));
+  assert.match(s.tg.of('sendMessage')[0].params.text, /未送达.*屏蔽/);
 });
 
-test('receipts: none on failed delivery; album marked on its first item; can be switched off per session', async () => {
+test('receipts = off silences failure reports (guest topic and list), per session or globally', async () => {
   const s = setup();
   await s.send(guest(5201));
+  const t = await listSetup(s, [5202]);
+  await listCb(s, t, 5202);
+  await stCb(s, 500, 'receipts'); // 默认 -> fail
+  await stCb(s, 500, 'receipts'); // fail -> off
+  assert.equal(s.row("SELECT value FROM settings WHERE scope = 't:500'").value, 'off');
   s.tg.clear();
   s.tg.failNext('copyMessage', 403, 'Forbidden: bot was blocked by the user');
   await s.send(inTopic(500, ADMIN1));
-  assert.deepEqual(reactions(s), []);
+  assert.equal(s.tg.of('sendMessage').length, 0, 'session set to off');
 
-  const ids = [nextMsgId(), nextMsgId()];
-  for (const id of ids) await s.send(inTopic(500, ADMIN1, { message_id: id, media_group_id: 'R1', text: undefined }));
+  s.tg.failNext('copyMessage', 403, 'Forbidden: bot was blocked by the user');
+  await s.send(inTopic(t, ADMIN1));
   await s.flush();
-  assert.deepEqual(reactions(s), [[ids[0], '👌']]);
+  assert.match(s.tg.of('sendMessage').at(-1).params.text, /已发送 0\/1/, 'list still follows global (fail)');
 
-  await stCb(s, 500, 'receipts'); // -> 1 (explicit)
-  await stCb(s, 500, 'receipts'); // -> 0
+  await stCb(s, 'g', 'receipts'); // -> fail
+  await stCb(s, 'g', 'receipts'); // -> off
   s.tg.clear();
-  await s.send(inTopic(500, ADMIN1));
-  await s.send(guest(5201));
-  assert.deepEqual(reactions(s), []);
+  s.tg.failNext('copyMessage', 403, 'Forbidden: bot was blocked by the user');
+  await s.send(inTopic(t, ADMIN1));
+  await s.flush();
+  assert.equal(s.tg.of('sendMessage').length, 0, 'global off');
 });
 
-test('receipts: RECEIPTS=0 in .env turns them off globally', async () => {
-  const s = setup({ RECEIPTS: '0' });
-  await s.send(guest(5301));
-  s.tg.clear();
-  await s.send(inTopic(500, ADMIN1));
-  assert.deepEqual(reactions(s), []);
+test('receipts: values from the earlier version still work (.env 1/0, stored 0)', async () => {
+  for (const [env, expected] of [['1', 'report'], ['0', 'silent'], ['', 'report']]) {
+    const s = setup({ RECEIPTS: env });
+    await s.send(guest(5301));
+    s.tg.clear();
+    s.tg.failNext('copyMessage', 403, 'Forbidden: bot was blocked by the user');
+    await s.send(inTopic(500, ADMIN1));
+    assert.equal(s.tg.of('sendMessage').length ? 'report' : 'silent', expected, `RECEIPTS=${env}`);
+  }
+  const s = setup();
+  await s.send(guest(5302));
+  s.d1.raw.exec("INSERT INTO settings VALUES ('t:500', 'receipts', '0')");
+  await s.send(inGeneral(ADMIN1, cmd('/settings')));
+  const g = generalPanel(s);
+  await g.press('st:o:500');
+  assert.match(g.view.text, /送达回执<\/b>：不提醒（本会话）/);
+  await g.press('st:500:receipts'); // legacy '0' == off -> next is 默认
+  assert.equal(s.row("SELECT * FROM settings WHERE scope = 't:500'"), undefined);
 });
 
 // ---------------------------------------------------------------- list maintenance
