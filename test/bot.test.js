@@ -237,17 +237,40 @@ test('non-admin members, anonymous admins, service messages and General chatter 
   assert.match(s.tg.of('sendMessage')[0].params.text, /匿名/);
 });
 
-test('channel posts: copy by default, forward when FORWARD_CHANNEL_POSTS=1', async () => {
-  for (const [flag, method] of [['0', 'copyMessage'], ['1', 'forwardMessage']]) {
-    const s = setup({ FORWARD_CHANNEL_POSTS: flag });
-    await s.send(guest(804));
+test('forward source: kept by default (any origin), never for admin or own-group origins', async () => {
+  const s = setup();
+  await s.send(guest(804));
+  const cases = [
+    [{ type: 'channel', chat: { id: -9 } }, 'forwardMessage'],
+    [{ type: 'user', sender_user: { id: 5 } }, 'forwardMessage'],
+    [{ type: 'hidden_user', sender_user_name: 'X' }, 'forwardMessage'],
+    [{ type: 'user', sender_user: { id: ADMIN2 } }, 'copyMessage'],
+    [{ type: 'chat', sender_chat: { id: GROUP } }, 'copyMessage'],
+    [undefined, 'copyMessage'],
+  ];
+  for (const [origin, method] of cases) {
     s.tg.clear();
-    await s.send(inTopic(500, ADMIN1, { forward_origin: { type: 'channel', chat: { id: -9 } } }));
-    assert.equal(s.tg.of(method).length, 1, `${flag} -> ${method}`);
-    s.tg.clear();
-    await s.send(inTopic(500, ADMIN1, { forward_origin: { type: 'user', sender_user: { id: 5 } } }));
-    assert.equal(s.tg.of('copyMessage').length, 1, 'non-channel origins are always copied');
+    await s.send(inTopic(500, ADMIN1, origin ? { forward_origin: origin } : {}));
+    assert.equal(s.tg.of(method).length, 1, `${JSON.stringify(origin)} -> ${method}`);
   }
+});
+
+test('forward source from .env: none / channel / legacy FORWARD_CHANNEL_POSTS', async () => {
+  const run = async (env, origin) => {
+    const s = setup(env);
+    await s.send(guest(805));
+    s.tg.clear();
+    await s.send(inTopic(500, ADMIN1, { forward_origin: origin }));
+    return s.tg.of('forwardMessage').length ? 'forward' : 'copy';
+  };
+  const user = { type: 'user', sender_user: { id: 5 } };
+  const channel = { type: 'channel', chat: { id: -9 } };
+  assert.equal(await run({ FORWARD_SOURCE: 'none' }, channel), 'copy');
+  assert.equal(await run({ FORWARD_SOURCE: 'channel' }, channel), 'forward');
+  assert.equal(await run({ FORWARD_SOURCE: 'channel' }, user), 'copy');
+  assert.equal(await run({ FORWARD_CHANNEL_POSTS: '1' }, user), 'copy', 'legacy 1 = channel');
+  assert.equal(await run({ FORWARD_CHANNEL_POSTS: '0' }, user), 'forward', 'legacy 0 is ignored');
+  assert.equal(await run({ FORWARD_SOURCE: 'bogus' }, user), 'forward', 'invalid falls back to default');
 });
 
 test('guest who blocked the bot: admin sees a notice in the topic', async () => {
@@ -573,4 +596,99 @@ test('a full 45-member fan-out stays within 50 Bot API calls', async () => {
   await s.flush();
   assert.equal(s.tg.of('copyMessage').length, 45);
   assert.ok(s.tg.calls.length <= 50, `calls: ${s.tg.calls.length}`);
+});
+
+// ---------------------------------------------------------------- /settings
+
+const stCb = (s, scope, key, from = ADMIN1) => s.send({ callback_query: {
+  id: 'q', from: { id: from }, data: `st:${scope}:${key}`,
+  message: { message_id: 6666, chat: { id: GROUP, type: 'supergroup' } } } });
+
+test('/settings in General shows global settings with their source', async () => {
+  const s = setup({ VERIFY: '0' });
+  await s.send(inGeneral(ADMIN1, cmd('/settings')));
+  const p = s.tg.of('sendMessage')[0].params;
+  assert.equal(p.message_thread_id, undefined);
+  assert.match(p.text, /转发来源<\/b>：保留（默认）/);
+  assert.match(p.text, /新访客验证<\/b>：关（\.env）/);
+  assert.deepEqual(p.reply_markup.inline_keyboard.map((r) => r[0].callback_data),
+    ['st:g:forward_source', 'st:g:verify', 'st:g:rate_limit', 'st:g:retention_days']);
+});
+
+test('global panel cycles values, overrides .env, and "默认" falls back again', async () => {
+  const s = setup({ RATE_LIMIT_PER_MIN: '3' });
+  for (let i = 0; i < 5; i++) await s.send(guest(3101));
+  assert.equal(s.tg.of('copyMessage').length, 3, '.env limit applies');
+  await stCb(s, 'g', 'rate_limit'); // -> 10
+  assert.equal(s.row("SELECT value FROM settings WHERE scope = 'g' AND key = 'rate_limit'").value, '10');
+  assert.match(s.tg.of('editMessageText').at(-1).params.text, /访客限速<\/b>：10 条\/分（面板）/);
+  s.tg.clear();
+  await s.send(guest(3101));
+  assert.equal(s.tg.of('copyMessage').length, 1, 'panel value wins over .env');
+  for (let i = 0; i < 4; i++) await stCb(s, 'g', 'rate_limit'); // 20, 60, 0(不限), back to 默认
+  assert.equal(s.row("SELECT * FROM settings WHERE key = 'rate_limit'"), undefined);
+  assert.match(s.tg.of('editMessageText').at(-1).params.text, /访客限速<\/b>：3（\.env）/, 'non-preset .env value shown as-is');
+});
+
+test('verify toggled off in the panel lets new guests straight through', async () => {
+  const s = setup({ VERIFY: '1' });
+  await stCb(s, 'g', 'verify'); // 默认 -> 1
+  await stCb(s, 'g', 'verify'); // 1 -> 0
+  s.tg.clear();
+  await s.send(guest(3201));
+  assert.equal(s.tg.of('copyMessage').length, 1);
+});
+
+test('topic panel: only topic-scoped settings; topic override beats global', async () => {
+  const s = setup();
+  await s.send(guest(3301));
+  s.tg.clear();
+  await s.send(inTopic(500, ADMIN1, cmd('/settings')));
+  const p = s.tg.of('sendMessage')[0].params;
+  assert.equal(p.message_thread_id, 500);
+  assert.deepEqual(p.reply_markup.inline_keyboard.map((r) => r[0].callback_data), ['st:500:forward_source']);
+  assert.match(p.reply_markup.inline_keyboard[0][0].text, /跟随全局/);
+
+  const fwd = { forward_origin: { type: 'user', sender_user: { id: 5 } } };
+  await stCb(s, 500, 'forward_source'); // -> all
+  await stCb(s, 500, 'forward_source'); // -> channel
+  await stCb(s, 500, 'forward_source'); // -> none
+  assert.equal(s.row("SELECT value FROM settings WHERE scope = 't:500'").value, 'none');
+  s.tg.clear();
+  await s.send(inTopic(500, ADMIN1, fwd));
+  assert.equal(s.tg.of('copyMessage').length, 1, 'topic says none');
+
+  await s.send(guest(3302)); // topic 501 follows global (all)
+  s.tg.clear();
+  await s.send(inTopic(501, ADMIN1, fwd));
+  assert.equal(s.tg.of('forwardMessage').length, 1, 'other topic unaffected');
+});
+
+test('list topics honor their own forward setting', async () => {
+  const s = setup({ FORWARD_SOURCE: 'none' });
+  const t = await listSetup(s, [3401]);
+  await listCb(s, t, 3401);
+  await stCb(s, t, 'forward_source'); // -> all
+  s.tg.clear();
+  await s.send(inTopic(t, ADMIN1, { forward_origin: { type: 'channel', chat: { id: -9 } } }));
+  await s.flush();
+  assert.equal(s.tg.of('forwardMessage')[0].params.chat_id, 3401);
+});
+
+test('settings panel: non-admins refused, global-only keys rejected in topics', async () => {
+  const s = setup();
+  await stCb(s, 'g', 'verify', 33);
+  assert.equal(s.tg.of('answerCallbackQuery').at(-1).params.text, '无权限');
+  await stCb(s, 500, 'verify');
+  await stCb(s, 'g', 'nope');
+  assert.equal(s.rows('SELECT * FROM settings').length, 0);
+});
+
+test('retention from the panel drives the cron cleanup', async () => {
+  const s = setup({ RETENTION_DAYS: '365' });
+  const now = Math.floor(Date.now() / 1000);
+  s.d1.raw.exec(`INSERT INTO msg_map VALUES (1, 1, 1, 0, ${now - 40 * 86400}), (1, 2, 2, 0, ${now})`);
+  s.d1.raw.exec("INSERT INTO settings VALUES ('g', 'retention_days', '30')");
+  await worker.scheduled({ scheduledTime: Date.UTC(2026, 0, 1, 3, 0) }, s.env, { waitUntil() {} });
+  assert.equal(s.rows('SELECT * FROM msg_map').length, 1);
 });

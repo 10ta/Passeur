@@ -9,6 +9,7 @@
 import { TgError } from './telegram.js';
 import { esc } from './text.js';
 import { bufferAlbum } from './relay.js';
+import { keepForwardSource } from './settings.js';
 
 export const MAX_MEMBERS = 45;
 const RECENT = 30;
@@ -97,7 +98,7 @@ export async function fanOut(app, msg) {
       reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true },
     });
   }
-  const forward = cfg.forwardChannelPosts && msg.forward_origin?.type === 'channel';
+  const forward = await keepForwardSource(app, msg, msg.message_thread_id);
   const deliver = (ids) => deliverAll(app, msg, members, ids, forward);
   const onError = (err) => app.notify(`⚠️ 名单群发失败：${err.message}`);
   if (msg.media_group_id) {

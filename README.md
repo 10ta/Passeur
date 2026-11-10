@@ -113,7 +113,7 @@ Open the guest's topic and write. Everything that is not a `/command` goes to th
 
 ### Forward something to a guest from account 1
 
-From any chat, **Forward** → pick the admin group → pick the guest's topic. The bot copies it to the guest without a "Forwarded from" header, so neither of your accounts shows. Set `FORWARD_CHANNEL_POSTS=1` to keep the original channel visible for posts forwarded from channels.
+From any chat, **Forward** → pick the admin group → pick the guest's topic. The guest receives it like a normal forward, with "Forwarded from" the original source. Your own accounts never show: a message that originates from an admin account or the admin group is copied instead. To hide sources, change **Forward source** in `/settings` (globally or for one topic).
 
 ### Reply to a specific message
 
@@ -129,12 +129,24 @@ A topic is a recipient list: a guest's own topic reaches that one guest, a **lis
 
 Guest topics always stay one-to-one, because a guest's replies come back to their own topic. Keep conversations between your admin accounts out of list topics: every message there is sent.
 
+### Change settings
+
+Send `/settings` in **General** for the global panel, or inside any topic (a guest's or a list) for that topic alone. Each button cycles through the options and saves at once; the panel shows where each value comes from (topic, panel, `.env` or default). Choosing **默认 / 跟随全局** removes the override.
+
+| Setting | Global | Per topic | Options |
+|---|---|---|---|
+| Forward source | ✅ | ✅ | keep (default) · channels only · hide |
+| New-guest captcha | ✅ | ❌ | on (default) · off |
+| Guest rate limit | ✅ | ❌ | 10 · 20 (default) · 60 per minute · off |
+| Message-link retention | ✅ | ❌ | 30 · 90 (default) · 365 days |
+
 ### Commands
 
 | Command | Where | What it does |
 |---|---|---|
 | `/info` | guest topic | Guest's name, username, ID and status |
 | `/block` / `/unblock` | guest topic | Silently drop / accept the guest's messages |
+| `/settings` | General, or any topic | Global settings panel, or that topic's own settings |
 | `/newlist <name>` | anywhere in the group | Create a list topic `📤 <name>` with its member panel |
 | `/list` | list topic | Post the member panel again |
 | `/broadcast` | General, as a reply | Send the replied message to every verified, unblocked guest |
@@ -148,7 +160,7 @@ Only accounts in `ADMIN_IDS` can use them; other group members are ignored. The 
 
 ## 🔧 Configuration
 
-Settings live in `.env` (template: [`.env.example`](.env.example)). `update.sh` pushes them to the Worker as secrets on every run, so edit `.env` and re-run rather than changing them in the dashboard.
+Connection settings live in `.env` (template: [`.env.example`](.env.example)); `update.sh` pushes them to the Worker as secrets on every run, so edit `.env` and re-run rather than changing them in the dashboard. The last four rows are only starting values: the `/settings` panel overrides them (see [Change settings](#change-settings)), resolved as topic → panel → `.env` → default.
 
 | Name | Required | Default | Description |
 |---|---|---|---|
@@ -159,11 +171,11 @@ Settings live in `.env` (template: [`.env.example`](.env.example)). `update.sh` 
 | `WORKER_URL` | ✅ | from deploy output | Base URL of the Worker |
 | `CLOUDFLARE_API_TOKEN` | ❌ | — | Only if you don't use `npx wrangler login` |
 | `CLOUDFLARE_ACCOUNT_ID` | ❌ | — | Only if the token sees several accounts |
+| `WELCOME_TEXT` | ❌ | built-in | Reply to `/start`; `\n` for line breaks |
 | `VERIFY` | ❌ | `1` | Math captcha for new guests |
 | `RATE_LIMIT_PER_MIN` | ❌ | `20` | Messages per guest per minute; `0` = off |
-| `FORWARD_CHANNEL_POSTS` | ❌ | `0` | `1` = forward (not copy) channel posts so the source shows |
+| `FORWARD_SOURCE` | ❌ | `all` | `all` / `channel` / `none`: keep "Forwarded from" for forwarded messages (legacy `FORWARD_CHANNEL_POSTS=1` = `channel`) |
 | `RETENTION_DAYS` | ❌ | `90` | How long reply/edit links between messages are kept |
-| `WELCOME_TEXT` | ❌ | built-in | Reply to `/start`; `\n` for line breaks |
 
 ## 🔄 Update & Maintenance
 
@@ -216,7 +228,8 @@ flowchart LR
 
 - **A topic is a recipient list** → a guest topic maps to its guest (`users.topic_id`), a list topic to its members (`list_members`); one send path, one rule.
 - **Topic ↔ guest is a row in D1** → any admin account can answer, and nothing about the guest lives in the bot's memory.
-- **Copy, not forward, by default** → the guest sees the bot, never the admin account that answered.
+- **Typed messages are copied, forwarded ones keep their source** → the guest sees the bot, never the admin account that answered; origins that are admin accounts or the admin group are always copied.
+- **Settings resolve topic → panel → `.env` → default** → one registry in `src/settings.js`; per-topic options use the same table with scope `t:<topic>`.
 - **The webhook always returns 200** → Telegram never retries, so a message is never sent twice; failures are reported in the topic or General instead.
 - **Albums are buffered for 2.5 s in `waitUntil`** → waiting costs wall time, not CPU, so it fits the 10 ms CPU limit; each item is claimed exactly once.
 - **Broadcast runs 40 guests per batch** → the free plan allows 50 outbound requests per invocation; the 5-minute cron continues the job.
@@ -243,6 +256,7 @@ The cron adds 288 requests/day. On the free plan the first limit you'd reach is 
 │   ├── relay.js       # copy/forward, albums, topic creation and recovery
 │   ├── broadcast.js   # Batched broadcast
 │   ├── lists.js       # List topics: member panel, fan-out
+│   ├── settings.js    # Settings registry, resolution, /settings panel
 │   ├── db.js          # All D1 queries
 │   └── telegram.js    # Bot API client
 ├── migrations/        # D1 schema
@@ -288,7 +302,7 @@ npm run build
 
 | Fact | Status | How to confirm |
 |---|---|---|
-| Forwarding a forwarded channel post keeps the channel as the source (`FORWARD_CHANNEL_POSTS=1`) | assumed | Forward a channel post into a topic, check the guest's view |
+| When the bot forwards a message that was itself forwarded, the guest sees the original source, not the admin group | assumed | Forward a channel post into a topic, check the guest's view |
 | Telegram returns `TOPIC_CLOSED` when the bot posts into a closed topic | assumed; Passeur reopens the topic | Close a topic, message the bot from that guest |
 | D1 bills an extra row written per index touched | assumed from docs | `meta.rows_written` of a message insert in Workers Logs |
 

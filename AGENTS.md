@@ -27,8 +27,9 @@ There is no linter; match the existing style.
 - `src/admin.js` — the admin forum group: relay topic → guest, commands, `/check`, delivery error reports.
 - `src/relay.js` — `sendSingle`, `sendAlbumItem`, topic create/recover, `syncEdit`. Shared by both directions via a `route` object.
 - `src/lists.js` — list topics: `/newlist`, member panel (`lm:<topic>:<user>` callbacks, saved on each tap), `fanOut` to members.
+- `src/settings.js` — `SETTINGS` registry, `getSetting(app, key, topicId?)`, `keepForwardSource`, `/settings` panel (`st:<g|topic>:<key>` callbacks).
 - `src/db.js` — the only place with SQL. `src/telegram.js` — Bot API client and `TgError` classifiers.
-- `migrations/` — D1 schema; add the next numbered file (`0003_*.sql`), never edit an applied migration.
+- `migrations/` — D1 schema; add the next numbered file (`0004_*.sql`), never edit an applied migration.
 - `scripts/env.mjs` — `.env` read/write and JSON bodies for `update.sh`.
 - `test/helpers.js` — fake D1 over `node:sqlite` (loads `migrations/`), fake Telegram with `failNext()`.
 - To change who may operate the bot, start in `src/admin.js` (`handleGroupMessage`) and `src/guest.js` (admin DM branch).
@@ -65,7 +66,9 @@ There is no linter; match the existing style.
 ## Config & secrets
 
 - Read from Worker secrets, pushed from `.env` by `update.sh` (`scripts/env.mjs secrets-json`; empty values become `null`, which deletes the secret). Parsed in `src/config.js`. Full table: [README → Configuration](README.md#-configuration).
-- Adding a setting: add it to `.env.example`, `SECRET_KEYS` in `scripts/env.mjs`, `loadConfig()`, and both READMEs.
+- Structural config (`BOT_TOKEN`, `ADMIN_IDS`, `GROUP_ID`, `WEBHOOK_SECRET`, `WELCOME_TEXT`) is parsed in `loadConfig()`.
+- Runtime settings resolve topic row → global row (`settings` table) → `.env` → default via `getSetting`. Add one: an entry in `SETTINGS` (key, label, env key, default, scopes, options, help), its `.env` key in `.env.example` and `SECRET_KEYS`, a row in both READMEs' settings table. Use `scopes: ['global', 'topic']` for per-conversation settings.
+- `getSetting` caches each scope per request (`app.settingsCache`); clear it after writing.
 - Tests need no secrets.
 
 ## Deployment & environments
@@ -88,7 +91,8 @@ There is no linter; match the existing style.
 - `ensureTopic` can fail (wrong `GROUP_ID`, lost Manage Topics): it must stay inside the guest's error handling so the guest is told, since the admin notice goes to the same unreachable group.
 - `node -e … "$value"` treats a negative number like `-100123` as a node option; pass values through files or `scripts/env.mjs`.
 - The fake D1 batch returns `results` only for statements starting with `SELECT`, like D1.
-- Copying a message drops the "Forwarded from" header; that is the intended privacy default.
+- Forwarding keeps "Forwarded from" (default `forward_source = all`); `keepForwardSource` must keep copying messages whose origin is an admin account or the admin group, or the admins are revealed.
+- Legacy `FORWARD_CHANNEL_POSTS`: only `1` means anything (= `channel`); `0` was the old template default and must stay ignored, or it would override the new `all` default in existing `.env` files.
 
 ## Current focus
 

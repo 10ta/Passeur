@@ -7,6 +7,7 @@ import { sendSingle, sendAlbumItem, syncEdit } from './relay.js';
 import { esc, userCard, HELP } from './text.js';
 import { runBroadcastBatch } from './broadcast.js';
 import { newList, showPanel, fanOut } from './lists.js';
+import { showSettings, keepForwardSource } from './settings.js';
 
 const SERVICE_KEYS = [
   'new_chat_members', 'left_chat_member', 'new_chat_title', 'new_chat_photo', 'delete_chat_photo',
@@ -84,7 +85,7 @@ async function relayToGuest(app, msg, user) {
   const route = {
     fromChat: cfg.groupId,
     toChat: user.user_id,
-    forward: cfg.forwardChannelPosts && msg.forward_origin?.type === 'channel',
+    forward: await keepForwardSource(app, msg, user.topic_id),
     replyTo,
     mapRow: (src, dst) => ({ guestId: user.user_id, guestMsgId: dst, topicMsgId: src, dir: DIR_OUT }),
   };
@@ -157,6 +158,8 @@ async function handleCommand(app, msg, cmd, threadId) {
       app.waitUntil(runBroadcastBatch(app).catch((err) => console.error('broadcast batch failed', err.message)));
       return;
     }
+    case 'settings':
+      return showSettings(app, msg, threadId);
     case 'newlist':
       return newList(app, msg, cmd.args, replyIn);
     case 'list':

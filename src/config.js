@@ -1,20 +1,14 @@
-// Parses Worker env (all values come from `wrangler secret bulk`, see update.sh).
+// Parses the structural Worker env (all values come from `wrangler secret bulk`,
+// see update.sh). Runtime-adjustable settings (verify, rate limit, forward
+// source, retention) live in src/settings.js, which also reads their .env keys.
 
 const DEFAULTS = {
-  VERIFY: '1',
-  RATE_LIMIT_PER_MIN: '20',
-  FORWARD_CHANNEL_POSTS: '0',
-  RETENTION_DAYS: '90',
   WELCOME_TEXT: '你好！直接发消息给我，我会转达给对方。\nHi! Just send your message here and it will be delivered.',
 };
 
 function int(value, fallback) {
   const n = Number.parseInt(String(value ?? '').trim(), 10);
   return Number.isFinite(n) ? n : fallback;
-}
-
-function flag(value) {
-  return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
 }
 
 export function loadConfig(env) {
@@ -31,10 +25,6 @@ export function loadConfig(env) {
     webhookSecret: String(env.WEBHOOK_SECRET ?? ''),
     adminIds,
     groupId, // 0 = setup mode: only /id works
-    verify: flag(get('VERIFY')),
-    rateLimitPerMin: Math.max(0, int(get('RATE_LIMIT_PER_MIN'), 20)),
-    forwardChannelPosts: flag(get('FORWARD_CHANNEL_POSTS')),
-    retentionDays: Math.max(1, int(get('RETENTION_DAYS'), 90)),
     welcomeText: String(get('WELCOME_TEXT')).replace(/\\n/g, '\n'),
   };
 }

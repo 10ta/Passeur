@@ -112,6 +112,14 @@ export function createDb(d1) {
       const r = await one('SELECT COUNT(*) AS users, SUM(blocked) AS blocked, SUM(verified) AS verified FROM users');
       return { users: r?.users ?? 0, blocked: r?.blocked ?? 0, verified: r?.verified ?? 0 };
     },
+    // ---- settings (src/settings.js) ----
+    async getSettings(scope) {
+      const rows = await all('SELECT key, value FROM settings WHERE scope = ?', scope);
+      return Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    },
+    setSetting: (scope, key, value) => run('INSERT OR REPLACE INTO settings (scope, key, value) VALUES (?, ?, ?)', scope, key, value),
+    deleteSetting: (scope, key) => run('DELETE FROM settings WHERE scope = ? AND key = ?', scope, key),
+
     // ---- list topics ----
     createList: (topicId, name) => run('INSERT INTO lists (topic_id, name, created_at) VALUES (?, ?, ?)', topicId, name, now()),
     getList: (topicId) => one('SELECT * FROM lists WHERE topic_id = ?', topicId),

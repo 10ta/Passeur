@@ -5,6 +5,7 @@ import { TgError } from './telegram.js';
 import { displayName, topicName, T } from './text.js';
 import { ensureTopic, recreateTopic, sendSingle, sendAlbumItem, syncEdit } from './relay.js';
 import { parseCommand } from './commands.js';
+import { getSetting } from './settings.js';
 
 const CAPTCHA_TTL = 600; // a challenge older than this is replaced on the next message
 const CAPTCHA_MAX_FAILS = 3;
@@ -24,19 +25,21 @@ export async function handleGuestMessage(app, msg) {
   if (cfg.adminIds.has(from.id)) return reply(app, msg.chat.id, T.adminDm);
   if (!cfg.groupId) return; // setup mode: nothing to relay to yet
 
-  const user = await db.ensureUser(from.id, displayName(from), from.username, !cfg.verify);
+  const verify = (await getSetting(app, 'verify')) === '1';
+  const user = await db.ensureUser(from.id, displayName(from), from.username, !verify);
   if (user.blocked) return;
 
   if (cmd?.name === 'start') {
     await reply(app, msg.chat.id, cfg.welcomeText);
-    if (cfg.verify && !user.verified) await challenge(app, msg.chat.id, user, null);
+    if (verify && !user.verified) await challenge(app, msg.chat.id, user, null);
     return;
   }
-  if (cfg.verify && !user.verified) return handleUnverified(app, msg, user);
+  if (verify && !user.verified) return handleUnverified(app, msg, user);
 
-  if (cfg.rateLimitPerMin > 0) {
-    const n = await db.recentInbound(from.id, 60, cfg.rateLimitPerMin);
-    if (n >= cfg.rateLimitPerMin) {
+  const limit = Number(await getSetting(app, 'rate_limit'));
+  if (limit > 0) {
+    const n = await db.recentInbound(from.id, 60, limit);
+    if (n >= limit) {
       if (now() - user.notice_at > NOTICE_EVERY) {
         await db.updateUser(from.id, { notice_at: now() });
         await reply(app, msg.chat.id, T.rateLimited);

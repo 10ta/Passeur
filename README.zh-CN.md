@@ -113,7 +113,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 
 ### 用号1 把内容转给访客
 
-在任意聊天里点**转发** → 选管理群 → 选该访客的话题。bot 会把它复制给访客，不带“转发自”标记，所以你的两个号都不会露出来。设置 `FORWARD_CHANNEL_POSTS=1` 后，从频道转发的帖子会保留原频道来源。
+在任意聊天里点**转发** → 选管理群 → 选该访客的话题。访客收到的效果和普通转发一样，显示“转发自”原始来源。你自己的号不会露出来：来源是管理员账号或管理群本身的消息，会改用复制。想隐藏来源，就在 `/settings` 里改**转发来源**（全局或单个话题）。
 
 ### 回复某条具体消息
 
@@ -129,12 +129,24 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 
 访客话题始终是一对一的，因为访客的回复总是回到他自己的话题。两个管理员号之间的商量不要放在名单话题里：那里的每条消息都会发出去。
 
+### 修改设置
+
+在 **General** 里发 `/settings` 调出全局面板；在任意话题（访客话题或名单话题）里发，则只设置这个话题。每个按钮点一下切到下一个选项并立即保存；面板会注明每个值来自哪里（本话题、面板、`.env` 或默认）。选到**默认 / 跟随全局**即取消覆盖。
+
+| 设置 | 全局 | 单个话题 | 选项 |
+|---|---|---|---|
+| 转发来源 | ✅ | ✅ | 保留（默认）· 仅频道 · 隐藏 |
+| 新访客验证 | ✅ | ❌ | 开（默认）· 关 |
+| 访客限速 | ✅ | ❌ | 每分钟 10 · 20（默认）· 60 · 不限 |
+| 消息对应保留 | ✅ | ❌ | 30 · 90（默认）· 365 天 |
+
 ### 命令
 
 | 命令 | 位置 | 作用 |
 |---|---|---|
 | `/info` | 访客话题 | 访客的名字、用户名、ID 和状态 |
 | `/block` / `/unblock` | 访客话题 | 静默丢弃 / 恢复接收该访客的消息 |
+| `/settings` | General 或任意话题 | 全局设置面板，或该话题的单独设置 |
 | `/newlist <名字>` | 群内任意位置 | 新建名单话题 `📤 <名字>`，附成员面板 |
 | `/list` | 名单话题 | 重新调出成员面板 |
 | `/broadcast` | General，回复某条消息 | 把被回复的那条消息发给所有已验证、未拉黑的访客 |
@@ -148,7 +160,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 
 ## 🔧 配置
 
-配置写在 `.env` 里（模板：[`.env.example`](.env.example)）。`update.sh` 每次运行都会把它们作为 secrets 推到 Worker，所以请改 `.env` 后重新运行，不要在后台直接改。
+连接类配置写在 `.env` 里（模板：[`.env.example`](.env.example)）；`update.sh` 每次运行都会把它们作为 secrets 推到 Worker，所以请改 `.env` 后重新运行，不要在后台直接改。表中最后四行只是初始值：`/settings` 面板会覆盖它们（见[修改设置](#修改设置)），优先级为 话题 → 面板 → `.env` → 默认。
 
 | 名称 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
@@ -159,11 +171,11 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 | `WORKER_URL` | ✅ | 取自部署输出 | Worker 的根地址 |
 | `CLOUDFLARE_API_TOKEN` | ❌ | — | 不用 `npx wrangler login` 时才需要 |
 | `CLOUDFLARE_ACCOUNT_ID` | ❌ | — | token 能看到多个账号时才需要 |
+| `WELCOME_TEXT` | ❌ | 内置 | 回复 `/start` 的内容；用 `\n` 换行 |
 | `VERIFY` | ❌ | `1` | 新访客需通过算术验证 |
 | `RATE_LIMIT_PER_MIN` | ❌ | `20` | 每位访客每分钟消息数上限；`0` 为关闭 |
-| `FORWARD_CHANNEL_POSTS` | ❌ | `0` | `1` = 频道帖子用转发而非复制，以保留来源 |
+| `FORWARD_SOURCE` | ❌ | `all` | `all` / `channel` / `none`：转发来的消息是否保留“转发自”（旧的 `FORWARD_CHANNEL_POSTS=1` 等同 `channel`） |
 | `RETENTION_DAYS` | ❌ | `90` | 消息之间的回复 / 编辑对应关系保留天数 |
-| `WELCOME_TEXT` | ❌ | 内置 | 回复 `/start` 的内容；用 `\n` 换行 |
 
 ## 🔄 更新与维护
 
@@ -216,7 +228,8 @@ flowchart LR
 
 - **话题就是收件人名单** → 访客话题对应它的访客（`users.topic_id`），名单话题对应它的成员（`list_members`）；同一条发送路径，同一条规则。
 - **话题与访客的对应是 D1 里的一行** → 任何管理员号都能回复，bot 内存里不保存访客的任何状态。
-- **默认复制而非转发** → 访客看到的永远是 bot，看不到是哪个管理员号回的。
+- **手打的消息复制，转发来的消息保留来源** → 访客看到的是 bot，看不到是哪个管理员号回的；来源是管理员账号或管理群本身时一律复制。
+- **设置按 话题 → 面板 → `.env` → 默认 解析** → 全部登记在 `src/settings.js` 一张表里；单个话题的设置用同一张表，作用域为 `t:<话题>`。
 - **webhook 始终返回 200** → Telegram 不会重试，消息不会重复发送；失败会在话题或 General 里报告。
 - **相册在 `waitUntil` 里缓冲 2.5 秒** → 等待消耗的是墙钟时间而不是 CPU，符合 10 毫秒 CPU 限制；每个相册项只会被认领一次。
 - **广播每批 40 人** → 免费版每次调用最多 50 个外部请求；剩下的由每 5 分钟一次的定时任务接着发。
@@ -243,6 +256,7 @@ flowchart LR
 │   ├── relay.js       # copy/forward, albums, topic creation and recovery
 │   ├── broadcast.js   # Batched broadcast
 │   ├── lists.js       # List topics: member panel, fan-out
+│   ├── settings.js    # Settings registry, resolution, /settings panel
 │   ├── db.js          # All D1 queries
 │   └── telegram.js    # Bot API client
 ├── migrations/        # D1 schema
@@ -288,7 +302,7 @@ npm run build
 
 | 事项 | 状态 | 确认方法 |
 |---|---|---|
-| 转发一条“转发自频道”的消息时，来源仍显示为原频道（`FORWARD_CHANNEL_POSTS=1`） | 推断 | 把频道帖子转进话题，看访客那边的显示 |
+| bot 转发一条本身就是转发来的消息时，访客看到的是原始来源，而不是管理群 | 推断 | 把频道帖子转进话题，看访客那边的显示 |
 | bot 往已关闭的话题发消息时，Telegram 返回 `TOPIC_CLOSED` | 推断；Passeur 会重新打开话题 | 关闭一个话题，再用该访客给 bot 发消息 |
 | D1 对每个被改动的索引额外计一行写入 | 据文档推断 | 在 Workers Logs 里看一次消息写入的 `meta.rows_written` |
 

@@ -7,6 +7,7 @@ import { handleGuestMessage, handleGuestEdit, handleCaptchaCallback } from './gu
 import { handleGroupMessage, handleGroupEdit } from './admin.js';
 import { runBroadcastBatch } from './broadcast.js';
 import { handleListCallback } from './lists.js';
+import { handleSettingsCallback, getSetting } from './settings.js';
 
 const CLEANUP_HOUR_UTC = 3;
 
@@ -15,6 +16,7 @@ export function createApp(env, ctx, overrides = {}) {
   const tg = overrides.tg ?? createTelegram(cfg.token);
   const app = {
     cfg,
+    env, // raw values for settings.js (.env layer)
     tg,
     db: createDb(env.DB),
     waitUntil: (p) => ctx.waitUntil(p),
@@ -44,6 +46,7 @@ export async function handleUpdate(app, update) {
   const cq = update.callback_query;
   if (cq && typeof cq.data === 'string' && cq.data.startsWith('cap:')) return handleCaptchaCallback(app, cq);
   if (cq && typeof cq.data === 'string' && cq.data.startsWith('lm:')) return handleListCallback(app, cq);
+  if (cq && typeof cq.data === 'string' && cq.data.startsWith('st:')) return handleSettingsCallback(app, cq);
   if (cq) await app.tg.call('answerCallbackQuery', { callback_query_id: cq.id }).catch(() => {});
 }
 
@@ -87,7 +90,7 @@ export default {
     if (!app.cfg.groupId) return;
     const at = new Date(event.scheduledTime);
     const tasks = [runBroadcastBatch(app)];
-    if (at.getUTCHours() === CLEANUP_HOUR_UTC && at.getUTCMinutes() < 5) tasks.push(app.db.cleanup(app.cfg.retentionDays));
+    if (at.getUTCHours() === CLEANUP_HOUR_UTC && at.getUTCMinutes() < 5) tasks.push(getSetting(app, 'retention_days').then((d) => app.db.cleanup(Math.max(1, Number(d)))));
     const results = await Promise.allSettled(tasks);
     for (const r of results) if (r.status === 'rejected') console.error('cron task failed', r.reason?.message ?? r.reason);
   },
