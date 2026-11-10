@@ -1,0 +1,17 @@
+{
+  "name": "passeur",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Two-way Telegram private-chat relay bot on Cloudflare Workers + D1, one forum topic per guest.",
+  "scripts": {
+    "test": "node --test --disable-warning=ExperimentalWarning test/*.test.js",
+    "build": "wrangler deploy --dry-run -c wrangler.example.toml --outdir .wrangler/dry-run"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

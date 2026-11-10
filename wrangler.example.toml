@@ -1,0 +1,19 @@
+# Template for wrangler.toml. update.sh copies this file and fills in the D1
+# database_id; wrangler.toml itself is gitignored (it holds your account's IDs).
+name = "passeur"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+# Broadcast batches + daily cleanup (03:00 UTC). Uses 1 of your account's Cron Trigger slots.
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "passeur"
+database_id = "__D1_DATABASE_ID__"
+migrations_dir = "migrations"
+
+[observability]
+enabled = true
