@@ -28,8 +28,9 @@ There is no linter; match the existing style.
 - `src/relay.js` — `sendSingle`, `sendAlbumItem`, topic create/recover, `syncEdit`. Shared by both directions via a `route` object.
 - `src/lists.js` — list topics: `/newlist`, member panel (`lm:<topic>:<user>` callbacks, saved on each tap), `fanOut` to members.
 - `src/settings.js` — `SETTINGS` registry, `getSetting(app, key, topicId?)`, `keepForwardSource`, `/settings` panel, driven from one General message: `st:h` global, `st:s:<page>` session list, `st:o:<topic>` session panel, `st:<g|topic>:<key>` cycle.
+- `src/receipts.js` — `markDelivered` (route `onSent` hook in `relay.js`) and `markSeen` (after a guest message); state in `users.receipt_msg_id` / `receipt_seen`.
 - `src/db.js` — the only place with SQL. `src/telegram.js` — Bot API client and `TgError` classifiers.
-- `migrations/` — D1 schema; add the next numbered file (`0004_*.sql`), never edit an applied migration.
+- `migrations/` — D1 schema; add the next numbered file (`0005_*.sql`), never edit an applied migration.
 - `scripts/env.mjs` — `.env` read/write and JSON bodies for `update.sh`.
 - `test/helpers.js` — fake D1 over `node:sqlite` (loads `migrations/`), fake Telegram with `failNext()`.
 - To change who may operate the bot, start in `src/admin.js` (`handleGroupMessage`) and `src/guest.js` (admin DM branch).
@@ -53,6 +54,8 @@ There is no linter; match the existing style.
 - Topics are recipient lists. Guest topics (`users.topic_id`) are strictly 1:1 and keep reply threading, edit sync and inbound relay; list topics (`lists`, `list_members`) are outbound-only fan-out without `msg_map` rows. Never add members to a guest topic: the guest's replies would land elsewhere.
 - List budget: `MAX_MEMBERS = 45` × 1 call + 1 reaction/report ≤ 50 (a test asserts it). Raising it needs batching via the cron.
 - `bufferAlbum(app, fromChat, msg, { group, single }, onError)` is the shared album buffer; `sendAlbumItem` (one route) and `fanOut` (many members) both use it.
+- Receipts mark only the latest admin message per guest topic: delivering a new one clears the previous reaction first, and 👀 is set once per message. Reaction failures never fail a delivery.
+- Telegram sends no update when a topic is deleted. List topics are retired explicitly (`st:x` → `st:X` → `db.deleteList`), which never deletes the Telegram topic. A `forum_topic_edited` with a name on a list topic updates `lists.name`.
 - Every per-message query must hit a primary key or index (check with `EXPLAIN QUERY PLAN` in a test).
 
 ## Do not
@@ -92,10 +95,9 @@ There is no linter; match the existing style.
 - `node -e … "$value"` treats a negative number like `-100123` as a node option; pass values through files or `scripts/env.mjs`.
 - The fake D1 batch returns `results` only for statements starting with `SELECT`, like D1.
 - Forwarding keeps "Forwarded from" (default `forward_source = all`); `keepForwardSource` must keep copying messages whose origin is any admin account or the admin group, or the admins are revealed.
-- Admins with forward privacy appear as `hidden_user` (name only). `rememberAdmin` stores each admin's display name (settings scope `a`, written only on change) on every admin message and on `/check`; `keepForwardSource` copies when the hidden name matches one of them or the sender.
+- Admins with forward privacy appear as `hidden_user` (name only). `rememberAdmin` stores each admin's display name (settings scope `a`, written only on change) from group messages, DMs to the bot and `/check`; `isAdminName` matches NFC-normalized names against them and the sender, and looks up still-unknown admins with `getChatMember`.
 - Legacy `FORWARD_CHANNEL_POSTS`: only `1` means anything (= `channel`); `0` was the old template default and must stay ignored, or it would override the new `all` default in existing `.env` files.
 
 ## Current focus
 
 - 2026-11-10: first version. Forwarded-origin row confirmed on the live bot; two "assumed" rows remain in README → Limitations.
-- Considered, not built: read receipts (Bot API has no read status for bot messages; an inferred "seen" mark when the guest next writes would be ~40 lines; not requested yet).

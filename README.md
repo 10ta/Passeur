@@ -111,6 +111,8 @@ Add a route or custom domain to the Worker in the Cloudflare dashboard, set `WOR
 
 Open the guest's topic and write. Everything that is not a `/command` goes to the guest: text, media, stickers, voice, albums. Both admin accounts can reply in the same topic.
 
+Your latest message in the topic carries a mark: 👌 once it reached the guest, 👀 once the guest has written anything since. Telegram tells bots nothing about reading, so 👀 is an inference, and only the latest message is marked (the mark moves when you send again).
+
 ### Forward something to a guest from account 1
 
 From any chat, **Forward** → pick the admin group → pick the guest's topic. The guest receives it like a normal forward, with "Forwarded from" the original source. Your own accounts never show: a message that originates from any admin account or the admin group is copied instead, including admins whose forward privacy hides their account (matched by name). To hide sources, change **Forward source** in `/settings` (globally or for one session).
@@ -129,6 +131,8 @@ A topic is a recipient list: a guest's own topic reaches that one guest, a **lis
 
 Guest topics always stay one-to-one, because a guest's replies come back to their own topic. Keep conversations between your admin accounts out of list topics: every message there is sent.
 
+Rename a list topic in Telegram whenever you like; Passeur follows the new name and works by topic, not by name. Deleting a topic in Telegram is not reported to bots, so to retire a list use `/settings` → 💬 会话设置 → the list → 🗑 移除名单 (members and its settings are cleared; the topic itself is left as it is).
+
 ### Change settings
 
 Send `/settings` in **General**. The panel shows the global settings; **💬 会话设置** opens a list of sessions (list topics first, then guests by recent activity, 20 per page, ⚙️ marks those with their own settings), and picking one shows that session's settings. Everything happens by editing that one message in General, so you never type inside a guest's topic. Each button cycles through the options and saves at once; the panel shows where each value comes from (session, global, `.env` or default). Choosing **默认 / 跟随全局** removes the override.
@@ -138,6 +142,7 @@ Send `/settings` in **General**. The panel shows the global settings; **💬 会
 | Forward source | ✅ | ✅ | keep (default) · channels only · hide |
 | New-guest captcha | ✅ | ❌ | on (default) · off |
 | Guest rate limit | ✅ | ❌ | 10 · 20 (default) · 60 per minute · off |
+| Delivery marks (👌/👀) | ✅ | ✅ | on (default) · off |
 | Message-link retention | ✅ | ❌ | 30 · 90 (default) · 365 days |
 
 ### Commands
@@ -160,7 +165,7 @@ Only accounts in `ADMIN_IDS` can use them; other group members are ignored. The 
 
 ## 🔧 Configuration
 
-Connection settings live in `.env` (template: [`.env.example`](.env.example)); `update.sh` pushes them to the Worker as secrets on every run, so edit `.env` and re-run rather than changing them in the dashboard. The last four rows are only starting values: the `/settings` panel overrides them (see [Change settings](#change-settings)), resolved as topic → panel → `.env` → default.
+Connection settings live in `.env` (template: [`.env.example`](.env.example)); `update.sh` pushes them to the Worker as secrets on every run, so edit `.env` and re-run rather than changing them in the dashboard. The last five rows are only starting values: the `/settings` panel overrides them (see [Change settings](#change-settings)), resolved as topic → panel → `.env` → default.
 
 | Name | Required | Default | Description |
 |---|---|---|---|
@@ -176,6 +181,7 @@ Connection settings live in `.env` (template: [`.env.example`](.env.example)); `
 | `RATE_LIMIT_PER_MIN` | ❌ | `20` | Messages per guest per minute; `0` = off |
 | `FORWARD_SOURCE` | ❌ | `all` | `all` / `channel` / `none`: keep "Forwarded from" for forwarded messages (legacy `FORWARD_CHANNEL_POSTS=1` = `channel`) |
 | `RETENTION_DAYS` | ❌ | `90` | How long reply/edit links between messages are kept |
+| `RECEIPTS` | ❌ | `1` | 👌/👀 marks on your latest message in a guest topic |
 
 ## 🔄 Update & Maintenance
 
@@ -257,6 +263,7 @@ The cron adds 288 requests/day. On the free plan the first limit you'd reach is 
 │   ├── broadcast.js   # Batched broadcast
 │   ├── lists.js       # List topics: member panel, fan-out
 │   ├── settings.js    # Settings registry, resolution, /settings panel
+│   ├── receipts.js    # 👌/👀 marks on the latest admin message
 │   ├── db.js          # All D1 queries
 │   └── telegram.js    # Bot API client
 ├── migrations/        # D1 schema
@@ -282,6 +289,12 @@ npm run build
 → `GROUP_ID` is not the admin group's ID. The usual culprit is the `-123…` in Telegram Web's address bar; the Bot API writes the same group as `-100123…`.
 → Send `/id` in the admin group (anyone can, even before setup is right), put the value in `.env`, run `./update.sh`. `update.sh` also detects a missing `-100` and offers the corrected value.
 
+**A forward from one of my admin accounts still shows its name to the guest**
+→ That account has forward privacy on, so Telegram gives the bot only its name. Passeur learns admin names from their messages in the group, DMs to the bot, `/check`, and as a last resort asks Telegram. If one still slips through, DM the bot once from that account (or run `/check`) and check that `/check` lists it by name.
+
+**A list topic I deleted still shows in 💬 会话设置**
+→ Telegram doesn't tell bots about deleted topics. Open it there and use 🗑 移除名单.
+
 ## 🔒 Security
 
 - The webhook only accepts requests carrying `WEBHOOK_SECRET` in `X-Telegram-Bot-Api-Secret-Token`.
@@ -294,6 +307,7 @@ npm run build
 - Edits sync text and captions only; replacing a photo is not mirrored.
 - A guest's message sent before passing the captcha is kept only if it was the first one (one album item at most).
 - Broadcast sends a single message; a replied-to album broadcasts its first item.
+- Delivery marks: 👀 means the guest wrote after your message, not that they read it; marks are kept on the latest message only.
 - List topics: at most 45 members (one Bot API call each within the free plan's 50 per invocation); edits are not synced; a guest's reply to a list message lands in their topic without the reply link.
 - Admin text starting with `/` is treated as a command, not sent.
 - A flood from one guest still costs one Worker request per message even when dropped.

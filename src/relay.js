@@ -1,7 +1,7 @@
 // Moving messages between a guest's private chat and their forum topic.
 //
 // A "route" describes one direction:
-//   { fromChat, toChat, threadId?, forward, replyTo?, mapRow(srcId, dstId), recoverThread? }
+//   { fromChat, toChat, threadId?, forward, replyTo?, mapRow(srcId, dstId), recoverThread?, onSent?(firstSrcId) }
 // recoverThread(err) is called once when the destination topic was deleted or
 // closed and returns the thread id to retry with (or throws).
 
@@ -33,6 +33,7 @@ export async function sendSingle(app, route, srcMsgId) {
     res = await app.tg.call(method, build(await route.recoverThread(err)));
   }
   await app.db.putMaps([route.mapRow(srcMsgId, res.message_id)]);
+  await route.onSent?.(srcMsgId);
   return res.message_id;
 }
 
@@ -97,6 +98,7 @@ async function sendGroup(app, route, ids) {
   if (Array.isArray(res) && res.length === ids.length) {
     await app.db.putMaps(ids.map((src, i) => route.mapRow(src, res[i].message_id)));
   }
+  await route.onSent?.(ids[0]);
 }
 
 // ---------------------------------------------------------------------------

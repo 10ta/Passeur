@@ -111,6 +111,8 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 
 打开该访客的话题直接写。只要不是 `/命令`，都会发给访客：文字、媒体、贴纸、语音、相册。两个管理员号都能在同一个话题里回复。
 
+你在话题里的最近一条消息上会带一个标记：👌 表示已送达，👀 表示对方之后又发过消息。Telegram 不告诉 bot 对方是否已读，所以 👀 只是推断；标记只保留在最近一条上，你再发新消息时它会移过去。
+
 ### 用号1 把内容转给访客
 
 在任意聊天里点**转发** → 选管理群 → 选该访客的话题。访客收到的效果和普通转发一样，显示“转发自”原始来源。你自己的号不会露出来：来源是任一管理员账号或管理群本身的消息，会改用复制；开了转发隐私、只显示名字的管理员号也一样（按名字识别）。想隐藏来源，就在 `/settings` 里改**转发来源**（全局或单个会话）。
@@ -129,6 +131,8 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 
 访客话题始终是一对一的，因为访客的回复总是回到他自己的话题。两个管理员号之间的商量不要放在名单话题里：那里的每条消息都会发出去。
 
+名单话题可以在 Telegram 里随意改名，Passeur 会跟着更新名字；功能按话题而不是按名字识别。Telegram 删除话题时不会通知 bot，所以不用的名单要在 `/settings` → 💬 会话设置 → 该名单 → 🗑 移除名单（成员和它的单独设置会被清除，话题本身保持原样）。
+
 ### 修改设置
 
 在 **General** 里发 `/settings`。面板显示全局设置；点 **💬 会话设置** 会列出所有会话（名单话题在前，访客按最近联系排序，每页 20 个，⚙️ 表示已有单独设置），选一个就进入该会话的设置。全部操作都在 General 里的这一条消息上完成，不需要在访客话题里打字。每个按钮点一下切到下一个选项并立即保存；面板会注明每个值来自哪里（本会话、全局、`.env` 或默认）。选到**默认 / 跟随全局**即取消覆盖。
@@ -138,6 +142,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 | 转发来源 | ✅ | ✅ | 保留（默认）· 仅频道 · 隐藏 |
 | 新访客验证 | ✅ | ❌ | 开（默认）· 关 |
 | 访客限速 | ✅ | ❌ | 每分钟 10 · 20（默认）· 60 · 不限 |
+| 送达标记（👌/👀） | ✅ | ✅ | 开（默认）· 关 |
 | 消息对应保留 | ✅ | ❌ | 30 · 90（默认）· 365 天 |
 
 ### 命令
@@ -160,7 +165,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 
 ## 🔧 配置
 
-连接类配置写在 `.env` 里（模板：[`.env.example`](.env.example)）；`update.sh` 每次运行都会把它们作为 secrets 推到 Worker，所以请改 `.env` 后重新运行，不要在后台直接改。表中最后四行只是初始值：`/settings` 面板会覆盖它们（见[修改设置](#修改设置)），优先级为 话题 → 面板 → `.env` → 默认。
+连接类配置写在 `.env` 里（模板：[`.env.example`](.env.example)）；`update.sh` 每次运行都会把它们作为 secrets 推到 Worker，所以请改 `.env` 后重新运行，不要在后台直接改。表中最后五行只是初始值：`/settings` 面板会覆盖它们（见[修改设置](#修改设置)），优先级为 话题 → 面板 → `.env` → 默认。
 
 | 名称 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
@@ -176,6 +181,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 | `RATE_LIMIT_PER_MIN` | ❌ | `20` | 每位访客每分钟消息数上限；`0` 为关闭 |
 | `FORWARD_SOURCE` | ❌ | `all` | `all` / `channel` / `none`：转发来的消息是否保留“转发自”（旧的 `FORWARD_CHANNEL_POSTS=1` 等同 `channel`） |
 | `RETENTION_DAYS` | ❌ | `90` | 消息之间的回复 / 编辑对应关系保留天数 |
+| `RECEIPTS` | ❌ | `1` | 访客话题里最近一条消息上的 👌/👀 标记 |
 
 ## 🔄 更新与维护
 
@@ -257,6 +263,7 @@ flowchart LR
 │   ├── broadcast.js   # Batched broadcast
 │   ├── lists.js       # List topics: member panel, fan-out
 │   ├── settings.js    # Settings registry, resolution, /settings panel
+│   ├── receipts.js    # 👌/👀 marks on the latest admin message
 │   ├── db.js          # All D1 queries
 │   └── telegram.js    # Bot API client
 ├── migrations/        # D1 schema
@@ -282,6 +289,12 @@ npm run build
 → `GROUP_ID` 不是管理群的 ID。最常见的是填了 Telegram Web 地址栏里的 `-123…`，Bot API 里同一个群写作 `-100123…`。
 → 在管理群里发 `/id`（任何人都能用，配置错误时也能用），把结果填进 `.env`，运行 `./update.sh`。`update.sh` 也会发现缺了 `-100` 并提示正确的值。
 
+**用某个管理员号转发的内容，访客那边仍能看到这个号的名字**
+→ 这个号开了转发隐私，Telegram 只给 bot 一个名字。Passeur 会从这些地方记下管理员的名字：他们在群里的发言、私聊 bot、`/check`，最后还会主动向 Telegram 查询。如果仍然漏过，就用那个号私聊 bot 一次（或运行 `/check`），并确认 `/check` 的结果里列出了它的名字。
+
+**在 Telegram 里删掉的名单话题，仍出现在「💬 会话设置」里**
+→ Telegram 删除话题时不会通知 bot。在会话设置里打开它，点 🗑 移除名单。
+
 ## 🔒 安全
 
 - webhook 只接受在 `X-Telegram-Bot-Api-Secret-Token` 里带有 `WEBHOOK_SECRET` 的请求。
@@ -294,6 +307,7 @@ npm run build
 - 编辑同步只覆盖文字和图片说明；替换图片不会同步。
 - 访客在通过验证前发的消息只保留第一条（相册最多保留其中一项）。
 - 广播只发一条消息；回复的是相册时只广播第一项。
+- 送达标记：👀 表示对方在你之后发过消息，不等于已读；只保留在最近一条消息上。
 - 名单话题：每个名单最多 45 人（每人占 1 次 Bot API 调用，免费版每次调用上限 50）；不做编辑同步；访客回复名单消息时，回复会进他的话题，但不显示“回复了哪条”。
 - 管理员以 `/` 开头的文字会被当作命令，不会发出。
 - 单个访客刷屏时，即使消息被丢弃，每条仍会消耗一次 Worker 请求。

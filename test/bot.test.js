@@ -612,8 +612,8 @@ test('/settings in General shows global settings with their source', async () =>
   assert.match(p.text, /转发来源<\/b>：保留（默认）/);
   assert.match(p.text, /新访客验证<\/b>：关（\.env）/);
   assert.deepEqual(p.reply_markup.inline_keyboard.map((r) => r[0].callback_data),
-    ['st:g:forward_source', 'st:g:verify', 'st:g:rate_limit', 'st:g:retention_days', 'st:s:0']);
-  assert.equal(p.reply_markup.inline_keyboard[1][0].text, '新访客验证：关（.env） ▸', 'button shows the effective value');
+    ['st:g:forward_source', 'st:g:receipts', 'st:g:verify', 'st:g:rate_limit', 'st:g:retention_days', 'st:s:0']);
+  assert.equal(p.reply_markup.inline_keyboard[2][0].text, '新访客验证：关（.env） ▸', 'button shows the effective value');
 });
 
 test('global panel cycles values, overrides .env, and "默认" falls back again', async () => {
@@ -647,7 +647,7 @@ test('topic panel: only topic-scoped settings; topic override beats global', asy
   await s.send(inTopic(500, ADMIN1, cmd('/settings')));
   const p = s.tg.of('sendMessage')[0].params;
   assert.equal(p.message_thread_id, 500);
-  assert.deepEqual(p.reply_markup.inline_keyboard.map((r) => r[0].callback_data), ['st:500:forward_source', 'st:s:0']);
+  assert.deepEqual(p.reply_markup.inline_keyboard.map((r) => r[0].callback_data), ['st:500:forward_source', 'st:500:receipts', 'st:s:0']);
   assert.match(p.reply_markup.inline_keyboard[0][0].text, /跟随全局/);
 
   const fwd = { forward_origin: { type: 'user', sender_user: { id: 5 } } };
@@ -724,7 +724,7 @@ test('session settings are reached from General: list -> session -> cycle -> bac
 
   await g.press('st:s:0');
   const list = g.buttons();
-  assert.deepEqual(list[0], ['📤 VIP', `st:o:${t}`], 'lists first');
+  assert.deepEqual(list[0], ['📤 VIP（0人）', `st:o:${t}`], 'lists first, with member count');
   assert.deepEqual(list.slice(1, 3).map(([, d]) => d).sort(), ['st:o:500', 'st:o:501']);
   assert.ok(list.some(([txt, d]) => d === 'st:o:500' && txt === '👤 Guest4101'));
 
@@ -787,4 +787,134 @@ test('/check also records admin names', async () => {
     ? { status: 'administrator', is_anonymous: false, user: { id: ADMIN2, first_name: 'Two' } } : orig(m, p));
   await s.send(inGeneral(ADMIN1, cmd('/check')));
   assert.equal(s.row("SELECT value FROM settings WHERE scope = 'a' AND key = ?", String(ADMIN2)).value, 'Two');
+});
+
+// ---------------------------------------------------------------- receipts
+
+const reactions = (s) => s.tg.of('setMessageReaction').map((c) => [c.params.message_id, c.params.reaction.map((r) => r.emoji).join('') || '∅']);
+
+test('receipts: 👌 moves to the latest admin message; 👀 once the guest writes', async () => {
+  const s = setup();
+  await s.send(guest(5101));
+  s.tg.clear();
+  const a1 = inTopic(500, ADMIN1);
+  await s.send(a1);
+  assert.deepEqual(reactions(s), [[a1.message.message_id, '👌']]);
+  const a2 = inTopic(500, ADMIN2);
+  s.tg.clear();
+  await s.send(a2);
+  assert.deepEqual(reactions(s), [[a1.message.message_id, '∅'], [a2.message.message_id, '👌']], 'old mark cleared');
+  s.tg.clear();
+  await s.send(guest(5101));
+  assert.deepEqual(reactions(s), [[a2.message.message_id, '👀']]);
+  s.tg.clear();
+  await s.send(guest(5101));
+  assert.deepEqual(reactions(s), [], '👀 is set only once');
+  const a3 = inTopic(500, ADMIN1);
+  s.tg.clear();
+  await s.send(a3);
+  assert.deepEqual(reactions(s), [[a2.message.message_id, '∅'], [a3.message.message_id, '👌']]);
+});
+
+test('receipts: none on failed delivery; album marked on its first item; can be switched off per session', async () => {
+  const s = setup();
+  await s.send(guest(5201));
+  s.tg.clear();
+  s.tg.failNext('copyMessage', 403, 'Forbidden: bot was blocked by the user');
+  await s.send(inTopic(500, ADMIN1));
+  assert.deepEqual(reactions(s), []);
+
+  const ids = [nextMsgId(), nextMsgId()];
+  for (const id of ids) await s.send(inTopic(500, ADMIN1, { message_id: id, media_group_id: 'R1', text: undefined }));
+  await s.flush();
+  assert.deepEqual(reactions(s), [[ids[0], '👌']]);
+
+  await stCb(s, 500, 'receipts'); // -> 1 (explicit)
+  await stCb(s, 500, 'receipts'); // -> 0
+  s.tg.clear();
+  await s.send(inTopic(500, ADMIN1));
+  await s.send(guest(5201));
+  assert.deepEqual(reactions(s), []);
+});
+
+test('receipts: RECEIPTS=0 in .env turns them off globally', async () => {
+  const s = setup({ RECEIPTS: '0' });
+  await s.send(guest(5301));
+  s.tg.clear();
+  await s.send(inTopic(500, ADMIN1));
+  assert.deepEqual(reactions(s), []);
+});
+
+// ---------------------------------------------------------------- list maintenance
+
+test('a list can be removed from the session panel (two taps); the topic is left alone', async () => {
+  const s = setup();
+  const t = await listSetup(s, [5401]);
+  await listCb(s, t, 5401);
+  await stCb(s, t, 'forward_source');
+  await s.send(inGeneral(ADMIN1, cmd('/settings')));
+  const g = generalPanel(s);
+  await g.press(`st:o:${t}`);
+  assert.ok(g.buttons().some(([txt, d]) => d === `st:x:${t}` && txt === '🗑 移除名单'));
+  await g.press(`st:x:${t}`);
+  assert.match(g.view.text, /移除名单「📤 客户」/);
+  assert.ok(s.row('SELECT * FROM lists WHERE topic_id = ?', t), 'nothing removed before confirming');
+  await g.press(`st:X:${t}`);
+  assert.equal(s.row('SELECT * FROM lists WHERE topic_id = ?', t), undefined);
+  assert.equal(s.rows('SELECT * FROM list_members WHERE topic_id = ?', t).length, 0);
+  assert.equal(s.rows("SELECT * FROM settings WHERE scope = ?", `t:${t}`).length, 0);
+  assert.equal(s.tg.of('deleteForumTopic').length, 0);
+  s.tg.clear();
+  await s.send(inTopic(t, ADMIN1));
+  await s.flush();
+  assert.equal(s.tg.of('copyMessage').length, 0, 'no longer fans out');
+  // Guest topics never offer removal.
+  await g.press('st:o:500');
+  assert.ok(!g.buttons().some(([, d]) => d.startsWith('st:x:')));
+});
+
+test('renaming a list topic in Telegram renames it in the menus', async () => {
+  const s = setup();
+  const t = await listSetup(s, [5501]);
+  await s.send(inTopic(t, ADMIN1, { text: undefined, forum_topic_edited: { name: '📤 客户A组' } }));
+  assert.equal(s.row('SELECT name FROM lists WHERE topic_id = ?', t).name, '客户A组');
+  await s.send(inTopic(t, ADMIN1, { text: undefined, forum_topic_edited: { icon_custom_emoji_id: 'x' } }));
+  assert.equal(s.row('SELECT name FROM lists WHERE topic_id = ?', t).name, '客户A组', 'icon-only edits ignored');
+  await s.send(inTopic(500, ADMIN1, { text: undefined, forum_topic_edited: { name: 'renamed guest topic' } }));
+  assert.equal(s.tg.of('copyMessage').length, 0, 'service messages never relayed');
+});
+
+// ---------------------------------------------------------------- admin names, fallbacks
+
+test('hidden-name admin never seen in the group is looked up on demand', async () => {
+  const s = setup();
+  await s.send(guest(5601));
+  const orig = s.tg.call;
+  s.tg.call = async (m, p) => (m === 'getChatMember' && p.user_id === ADMIN2
+    ? { status: 'left', user: { id: ADMIN2, first_name: 'Σκῖps' } } : orig(m, p));
+  s.tg.clear();
+  await s.send(inTopic(500, ADMIN1, { forward_origin: { type: 'hidden_user', sender_user_name: 'Σκῖps' } }));
+  assert.equal(s.tg.of('forwardMessage').length, 0);
+  assert.equal(s.tg.of('copyMessage').length, 1, 'copied: the name belongs to an admin');
+  assert.equal(s.row("SELECT value FROM settings WHERE scope = 'a' AND key = ?", String(ADMIN2)).value, 'Σκῖps');
+});
+
+test('names match across Unicode normalization; an admin DM records the name', async () => {
+  const s = setup();
+  await s.send(guest(5701));
+  const dm = guest(ADMIN2);
+  dm.message.from.first_name = 'Σκῖps'.normalize('NFD');
+  await s.send(dm);
+  s.tg.clear();
+  await s.send(inTopic(500, ADMIN1, { forward_origin: { type: 'hidden_user', sender_user_name: 'Σκῖps'.normalize('NFC') } }));
+  assert.equal(s.tg.of('copyMessage').length, 1);
+});
+
+test('/check shows admin names', async () => {
+  const s = setup();
+  const orig = s.tg.call;
+  s.tg.call = async (m, p) => (m === 'getChatMember' && p.user_id === ADMIN2
+    ? { status: 'administrator', is_anonymous: false, user: { id: ADMIN2, first_name: 'Σκῖps' } } : orig(m, p));
+  await s.send(inGeneral(ADMIN1, cmd('/check')));
+  assert.match(s.tg.of('sendMessage')[0].params.text, new RegExp(`${ADMIN2}</code>（Σκῖps）已就绪`));
 });

@@ -5,7 +5,8 @@ import { TgError } from './telegram.js';
 import { displayName, topicName, T } from './text.js';
 import { ensureTopic, recreateTopic, sendSingle, sendAlbumItem, syncEdit } from './relay.js';
 import { parseCommand } from './commands.js';
-import { getSetting } from './settings.js';
+import { getSetting, rememberAdmin } from './settings.js';
+import { markSeen } from './receipts.js';
 
 const CAPTCHA_TTL = 600; // a challenge older than this is replaced on the next message
 const CAPTCHA_MAX_FAILS = 3;
@@ -22,7 +23,10 @@ export async function handleGuestMessage(app, msg) {
   const cmd = parseCommand(msg);
 
   if (cmd?.name === 'id') return reply(app, msg.chat.id, `Your ID: ${from.id}`);
-  if (cfg.adminIds.has(from.id)) return reply(app, msg.chat.id, T.adminDm);
+  if (cfg.adminIds.has(from.id)) {
+    await rememberAdmin(app, from).catch(() => {}); // lets forwards from this account be recognized by name
+    return reply(app, msg.chat.id, T.adminDm);
+  }
   if (!cfg.groupId) return; // setup mode: nothing to relay to yet
 
   const verify = (await getSetting(app, 'verify')) === '1';
@@ -50,6 +54,7 @@ export async function handleGuestMessage(app, msg) {
 
   await refreshProfile(app, from, user);
   await relayToTopic(app, msg, from, user);
+  await markSeen(app, user);
 }
 
 /** Relays a guest message (or a pending message id after captcha) into the topic. */

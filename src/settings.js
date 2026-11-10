@@ -14,7 +14,12 @@ export const SETTINGS = [
     help: '转发来的消息发给访客时，是否保留“转发自…”。来源是任一管理员账号（含开了转发隐私的）或本群时，总是隐藏。',
   },
   {
-    key: 'verify', label: '新访客验证', env: 'VERIFY', def: '1', scopes: ['global'],
+    key: 'receipts', label: '送达标记', env: 'RECEIPTS', def: '1', scopes: ['global', 'topic'], flag: true,
+    options: [['1', '开'], ['0', '关']],
+    help: '只标在你发给访客的最近一条消息上：👌 已送达，👀 对方之后又发了消息（推断已读）。',
+  },
+  {
+    key: 'verify', label: '新访客验证', env: 'VERIFY', def: '1', scopes: ['global'], flag: true,
     options: [['1', '开'], ['0', '关']],
     help: '新访客首次发消息前要点一道算术题。',
   },
@@ -41,7 +46,7 @@ function envValue(env, def) {
     raw = 'channel'; // legacy key from the first version; "0" there was just the old default, so it is ignored
   }
   if (!raw) return null;
-  if (def.key === 'verify') return FLAG_TRUE.includes(raw) ? '1' : FLAG_FALSE.includes(raw) ? '0' : null;
+  if (def.flag) return FLAG_TRUE.includes(raw) ? '1' : FLAG_FALSE.includes(raw) ? '0' : null;
   if (def.options.some(([v]) => v === raw)) return raw;
   return /^\d+$/.test(raw) && def.key !== 'forward_source' ? raw : null; // e.g. RATE_LIMIT_PER_MIN=15
 }
@@ -52,6 +57,27 @@ const ADMIN_SCOPE = 'a'; // settings rows: key = admin user id, value = display 
 /** Records an admin's current display name; writes only when it changed. */
 export function rememberAdmin(app, user) {
   return app.db.upsertSetting(ADMIN_SCOPE, String(user.id), displayName(user));
+}
+
+const sameName = (a, b) => String(a ?? '').normalize('NFC').trim() === String(b ?? '').normalize('NFC').trim();
+
+/**
+ * Whether a privacy-hidden forward name belongs to an admin. Names are kept
+ * from admins' own messages, DMs and /check; any admin still unknown is looked
+ * up once here (getChatMember works for members and for accounts that left).
+ */
+async function isAdminName(app, name, sender) {
+  if (sender && sameName(displayName(sender), name)) return true;
+  const known = await app.db.getSettings(ADMIN_SCOPE);
+  if (Object.values(known).some((n) => sameName(n, name))) return true;
+  for (const id of app.cfg.adminIds) {
+    if (known[String(id)] != null) continue;
+    const m = await app.tg.call('getChatMember', { chat_id: app.cfg.groupId, user_id: id }).catch(() => null);
+    if (!m?.user) continue;
+    await rememberAdmin(app, m.user).catch(() => {});
+    if (sameName(displayName(m.user), name)) return true;
+  }
+  return false;
 }
 
 /** Rows of one scope, read once per request. */
@@ -94,11 +120,7 @@ export async function keepForwardSource(app, msg, topicId) {
   if (mode === 'channel') return origin.type === 'channel';
   if (origin.type === 'user' && app.cfg.adminIds.has(origin.sender_user?.id)) return false;
   if (origin.type === 'chat' && origin.sender_chat?.id === app.cfg.groupId) return false;
-  if (origin.type === 'hidden_user') {
-    const names = new Set(Object.values(await app.db.getSettings(ADMIN_SCOPE)));
-    if (msg.from) names.add(displayName(msg.from));
-    if (names.has(origin.sender_user_name)) return false;
-  }
+  if (origin.type === 'hidden_user') return !(await isAdminName(app, origin.sender_user_name, msg.from));
   return true;
 }
 
@@ -135,6 +157,9 @@ async function panel(app, topicId) {
       callback_data: `st:${topicId || 'g'}:${def.key}`,
     }]);
   }
+  if (topicId && (await app.db.getList(topicId))) {
+    rows.push([{ text: '🗑 移除名单', callback_data: `st:x:${topicId}` }]);
+  }
   rows.push(topicId
     ? [{ text: '◂ 会话列表', callback_data: 'st:s:0' }, { text: '◂ 全局设置', callback_data: 'st:h' }]
     : [{ text: '💬 会话设置 ▸', callback_data: 'st:s:0' }]);
@@ -151,7 +176,7 @@ async function sessionList(app, page) {
   const more = guests.length > PAGE;
   const mark = (id) => (custom.has(id) ? '⚙️ ' : '');
   const items = [
-    ...lists.map((l) => ({ text: `${mark(l.topic_id)}📤 ${l.name}`, id: l.topic_id })),
+    ...lists.map((l) => ({ text: `${mark(l.topic_id)}📤 ${l.name}（${l.n}人）`, id: l.topic_id })),
     ...guests.slice(0, PAGE).map((g) => ({ text: `${mark(g.topic_id)}👤 ${g.name || g.user_id}`, id: g.topic_id })),
   ];
   const rows = [];
@@ -189,6 +214,26 @@ export async function handleSettingsCallback(app, cq) {
   if (m) { await answer(); return show(await sessionList(app, Number(m[1]))); }
   m = /^st:o:(\d+)$/.exec(cq.data);
   if (m) { await answer(); return show(await panel(app, Number(m[1]))); }
+  // Unregister a list topic (e.g. one deleted in Telegram, which bots are not told about).
+  m = /^st:x:(\d+)$/.exec(cq.data);
+  if (m) {
+    const list = await db.getList(Number(m[1]));
+    if (!list) { await answer('名单已不存在'); return show(await sessionList(app, 0)); }
+    await answer();
+    return show({
+      text: `移除名单「📤 ${list.name}」？\n它的成员和单独设置会一起清除；话题本身不会被删除，之后在里面发的消息不再群发。`,
+      reply_markup: { inline_keyboard: [[
+        { text: '确认移除', callback_data: `st:X:${m[1]}` },
+        { text: '取消', callback_data: `st:o:${m[1]}` },
+      ]] },
+    });
+  }
+  m = /^st:X:(\d+)$/.exec(cq.data);
+  if (m) {
+    await db.deleteList(Number(m[1]));
+    await answer('已移除');
+    return show(await sessionList(app, 0));
+  }
 
   // Cycle one setting: [inherit, ...options] — inherit removes the row.
   m = /^st:(g|\d+):([a-z_]+)$/.exec(cq.data);

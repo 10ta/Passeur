@@ -4,10 +4,11 @@ import { DIR_OUT } from './db.js';
 import { TgError } from './telegram.js';
 import { parseCommand } from './commands.js';
 import { sendSingle, sendAlbumItem, syncEdit } from './relay.js';
-import { esc, userCard, HELP } from './text.js';
+import { esc, userCard, HELP, displayName } from './text.js';
 import { runBroadcastBatch } from './broadcast.js';
 import { newList, showPanel, fanOut } from './lists.js';
 import { showSettings, keepForwardSource, rememberAdmin } from './settings.js';
+import { markDelivered } from './receipts.js';
 
 const SERVICE_KEYS = [
   'new_chat_members', 'left_chat_member', 'new_chat_title', 'new_chat_photo', 'delete_chat_photo',
@@ -55,6 +56,11 @@ export async function handleGroupMessage(app, msg) {
     await replyIn(app, msg, '⚠️ 匿名管理员发的消息无法识别身份，未转达。请在群管理员设置里关闭“保持匿名”。');
     return;
   }
+  // A list topic renamed in Telegram: keep the menus in step (the topic id is what matters).
+  if (msg.forum_topic_edited?.name && msg.is_topic_message && (await db.getList(msg.message_thread_id))) {
+    await db.renameList(msg.message_thread_id, msg.forum_topic_edited.name.replace(/^📤\s*/u, '') || msg.forum_topic_edited.name);
+    return;
+  }
   if (!isAdmin || msg.from.is_bot || isService(msg)) return;
   await rememberAdmin(app, msg.from); // for hiding privacy-protected forwards from admins
 
@@ -89,6 +95,7 @@ async function relayToGuest(app, msg, user) {
     forward: await keepForwardSource(app, msg, user.topic_id),
     replyTo,
     mapRow: (src, dst) => ({ guestId: user.user_id, guestMsgId: dst, topicMsgId: src, dir: DIR_OUT }),
+    onSent: (srcId) => markDelivered(app, user, srcId),
   };
   const onError = (err) => reportDelivery(app, msg, err);
   try {
@@ -196,7 +203,8 @@ async function selfCheck(app) {
     if (m?.user) await rememberAdmin(app, m.user).catch(() => {});
     const inGroup = m && ['creator', 'administrator', 'member', 'restricted'].includes(m.status);
     if (!inGroup) { lines.push(`⚠️ 管理员 <code>${id}</code> 不在群里`); continue; }
-    ok(!m.is_anonymous, `管理员 <code>${id}</code> 已就绪`, `管理员 <code>${id}</code> 开着“保持匿名”，消息会无法识别`);
+    const who = m.user ? `<code>${id}</code>（${esc(displayName(m.user))}）` : `<code>${id}</code>`;
+    ok(!m.is_anonymous, `管理员 ${who}已就绪`, `管理员 ${who}开着“保持匿名”，消息会无法识别`);
   }
   return lines.join('\n');
 }

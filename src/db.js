@@ -128,7 +128,15 @@ export function createDb(d1) {
       const rows = await all("SELECT DISTINCT scope FROM settings WHERE scope >= 't:' AND scope < 't;'");
       return new Set(rows.map((r) => Number(r.scope.slice(2))));
     },
-    allLists: () => all('SELECT topic_id, name FROM lists ORDER BY created_at'),
+    allLists: () => all(
+      `SELECT l.topic_id, l.name, (SELECT COUNT(*) FROM list_members m WHERE m.topic_id = l.topic_id) AS n
+       FROM lists l ORDER BY l.created_at`),
+    renameList: (topicId, name) => run('UPDATE lists SET name = ? WHERE topic_id = ?', name, topicId),
+    deleteList: (topicId) => d1.batch([
+      d1.prepare('DELETE FROM list_members WHERE topic_id = ?').bind(topicId),
+      d1.prepare('DELETE FROM settings WHERE scope = ?').bind(`t:${topicId}`),
+      d1.prepare('DELETE FROM lists WHERE topic_id = ?').bind(topicId),
+    ]),
     deleteSetting: (scope, key) => run('DELETE FROM settings WHERE scope = ? AND key = ?', scope, key),
 
     // ---- list topics ----

@@ -14,7 +14,7 @@ import { readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
 const ENV_FILE = '.env';
 const SECRET_KEYS = [
   'BOT_TOKEN', 'WEBHOOK_SECRET', 'ADMIN_IDS', 'GROUP_ID',
-  'VERIFY', 'RATE_LIMIT_PER_MIN', 'FORWARD_SOURCE', 'FORWARD_CHANNEL_POSTS', 'RETENTION_DAYS', 'WELCOME_TEXT',
+  'VERIFY', 'RATE_LIMIT_PER_MIN', 'FORWARD_SOURCE', 'RECEIPTS', 'FORWARD_CHANNEL_POSTS', 'RETENTION_DAYS', 'WELCOME_TEXT',
 ];
 
 const unquote = (v) => {
