@@ -137,6 +137,13 @@ export function createDb(d1) {
       d1.prepare('DELETE FROM settings WHERE scope = ?').bind(`t:${topicId}`),
       d1.prepare('DELETE FROM lists WHERE topic_id = ?').bind(topicId),
     ]),
+    /** Erases a guest (/forget). The Telegram topic is handled by the caller. */
+    forgetUser: (userId, topicId) => d1.batch([
+      d1.prepare('DELETE FROM msg_map WHERE guest_id = ?').bind(userId),
+      d1.prepare('DELETE FROM list_members WHERE user_id = ?').bind(userId),
+      d1.prepare('DELETE FROM settings WHERE scope = ?').bind(`t:${topicId}`),
+      d1.prepare('DELETE FROM users WHERE user_id = ?').bind(userId),
+    ]),
     deleteSetting: (scope, key) => run('DELETE FROM settings WHERE scope = ? AND key = ?', scope, key),
 
     // ---- list topics ----

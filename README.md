@@ -113,6 +113,8 @@ Open the guest's topic and write. Everything that is not a `/command` goes to th
 
 Delivery is silent when it works. If a message can't be delivered (the guest blocked the bot, Telegram rate limit, protected content…), the bot replies under it in the topic with the reason. Set **送达回执** to 不提醒 in `/settings` to silence even that.
 
+Start a message with `//` to keep it inside the topic: a note between your admin accounts that the guest never sees (works in list topics too). A topic whose guest is waiting for an answer shows a ❗ icon in the sidebar; it goes back to normal once a reply is delivered.
+
 ### Forward something to a guest from account 1
 
 From any chat, **Forward** → pick the admin group → pick the guest's topic. The guest receives it like a normal forward, with "Forwarded from" the original source. Your own accounts never show: a message that originates from any admin account or the admin group is copied instead, including admins whose forward privacy hides their account (matched by name). To hide sources, change **Forward source** in `/settings` (globally or for one session).
@@ -120,6 +122,10 @@ From any chat, **Forward** → pick the admin group → pick the guest's topic. 
 ### Reply to a specific message
 
 Use Telegram's **Reply** in the topic; the guest sees it as a reply to their own message. It works the other way too.
+
+### Know where guests come from
+
+Share links like `https://t.me/<your_bot>?start=blog` (letters, digits, `_` and `-`, up to 64). The first link a guest arrives with is kept as their source and shown in their topic name (`Alice · blog · 123456789`), the user card and `/info`.
 
 ### Send one message to several guests
 
@@ -140,6 +146,7 @@ Send `/settings` in **General**. The panel shows the global settings; **💬 会
 | Setting | Global | Per topic | Options |
 |---|---|---|---|
 | Forward source | ✅ | ✅ | keep (default) · channels only · hide |
+| Topic status icon | ✅ | ❌ | on (default) · off |
 | New-guest captcha | ✅ | ❌ | on (default) · off |
 | Guest rate limit | ✅ | ❌ | 10 · 20 (default) · 60 per minute · off |
 | Delivery receipts | ✅ | ✅ | failures only (default) · off |
@@ -150,6 +157,7 @@ Send `/settings` in **General**. The panel shows the global settings; **💬 会
 | Command | Where | What it does |
 |---|---|---|
 | `/info` | guest topic | Guest's name, username, ID and status |
+| `/forget` | guest topic | Erase everything the bot keeps about the guest (asks first; can also delete the topic) |
 | `/block` / `/unblock` | guest topic | Silently drop / accept the guest's messages |
 | `/settings` | General | Settings panel: global, and per session under 💬 会话设置 |
 | `/newlist <name>` | anywhere in the group | Create a list topic `📤 <name>` with its member panel |
@@ -165,7 +173,7 @@ Only accounts in `ADMIN_IDS` can use them; other group members are ignored. The 
 
 ## 🔧 Configuration
 
-Connection settings live in `.env` (template: [`.env.example`](.env.example)); `update.sh` pushes them to the Worker as secrets on every run, so edit `.env` and re-run rather than changing them in the dashboard. The last five rows are only starting values: the `/settings` panel overrides them (see [Change settings](#change-settings)), resolved as topic → panel → `.env` → default.
+Connection settings live in `.env` (template: [`.env.example`](.env.example)); `update.sh` pushes them to the Worker as secrets on every run, so edit `.env` and re-run rather than changing them in the dashboard. The last six rows are only starting values: the `/settings` panel overrides them (see [Change settings](#change-settings)), resolved as topic → panel → `.env` → default.
 
 | Name | Required | Default | Description |
 |---|---|---|---|
@@ -181,6 +189,7 @@ Connection settings live in `.env` (template: [`.env.example`](.env.example)); `
 | `RATE_LIMIT_PER_MIN` | ❌ | `20` | Messages per guest per minute; `0` = off |
 | `FORWARD_SOURCE` | ❌ | `all` | `all` / `channel` / `none`: keep "Forwarded from" for forwarded messages (legacy `FORWARD_CHANNEL_POSTS=1` = `channel`) |
 | `RETENTION_DAYS` | ❌ | `90` | How long reply/edit links between messages are kept |
+| `TOPIC_STATUS` | ❌ | `1` | ❗ icon on topics whose guest is waiting for an answer |
 | `RECEIPTS` | ❌ | `fail` | `fail`: reply in the topic only when a delivery fails · `off`: never |
 
 ## 🔄 Update & Maintenance
@@ -208,7 +217,7 @@ Restore into a fresh database with `npx wrangler d1 execute passeur --remote --f
 npx wrangler tail passeur
 ```
 
-Errors also appear in the group's General topic, and in Workers Logs in the dashboard (kept 3 days on the free plan).
+Errors also appear in the group's General topic, and in Workers Logs in the dashboard (kept 3 days on the free plan). Every 5 minutes the bot also checks whether Telegram can deliver to it; if deliveries fail or pile up you get one ⚠️ in General, and one ✅ when they recover.
 
 ### Uninstall
 
@@ -220,36 +229,7 @@ It asks before each step: remove the webhook, delete the Worker (with its secret
 
 ## 🧠 How It Works
 
-```mermaid
-flowchart LR
-  G[Guest DM] -- webhook --> W[Worker /webhook]
-  A1[Account 1] -- post / forward into topic --> T[Admin group topic]
-  A2[Account 2] -- post into topic --> T
-  T -- webhook --> W
-  W -- copyMessage --> T
-  W -- copyMessage --> G
-  W <--> D[(D1: users, msg_map, albums, broadcasts)]
-  C[Cron */5] --> W
-```
-
-- **A topic is a recipient list** → a guest topic maps to its guest (`users.topic_id`), a list topic to its members (`list_members`); one send path, one rule.
-- **Topic ↔ guest is a row in D1** → any admin account can answer, and nothing about the guest lives in the bot's memory.
-- **Typed messages are copied, forwarded ones keep their source** → the guest sees the bot, never the admin account that answered; origins that are admin accounts or the admin group are always copied.
-- **Settings resolve topic → panel → `.env` → default** → one registry in `src/settings.js`; per-topic options use the same table with scope `t:<topic>`.
-- **The webhook always returns 200** → Telegram never retries, so a message is never sent twice; failures are reported in the topic or General instead.
-- **Albums are buffered for 2.5 s in `waitUntil`** → waiting costs wall time, not CPU, so it fits the 10 ms CPU limit; each item is claimed exactly once.
-- **Broadcast runs 40 guests per batch** → the free plan allows 50 outbound requests per invocation; the 5-minute cron continues the job.
-- **Every per-message query uses a key or index** → rows read stay close to rows returned.
-
-### Cost per message (measured on the test doubles)
-
-| Path | Worker requests | D1 queries | D1 rows written | CPU |
-|---|---|---|---|---|
-| Guest → topic | 1 | 3 | ~2 | < 1 ms |
-| Topic → guest | 1 | 2 | ~2 | < 1 ms |
-| New guest (topic + card) | 1 | 8 | ~5 | < 1 ms |
-
-The cron adds 288 requests/day. On the free plan the first limit you'd reach is 100,000 requests/day for the whole account.
+A guest's topic maps to that guest and a list topic to its members, both as rows in D1; the Worker copies (or forwards) messages between the topic and the guest, never retries a send, and reports failures in the group. The 5-minute cron runs broadcasts, the webhook health check and daily cleanup. Diagram, design decisions and measured cost per message: [docs/how-it-works.md](docs/how-it-works.md).
 
 ## 📁 Project Structure
 
@@ -263,6 +243,9 @@ The cron adds 288 requests/day. On the free plan the first limit you'd reach is 
 │   ├── broadcast.js   # Batched broadcast
 │   ├── lists.js       # List topics: member panel, fan-out
 │   ├── settings.js    # Settings registry, resolution, /settings panel
+│   ├── status.js      # ❗ waiting icon on guest topics
+│   ├── health.js      # Webhook health check (cron)
+│   ├── forget.js      # /forget
 │   ├── db.js          # All D1 queries
 │   └── telegram.js    # Bot API client
 ├── migrations/        # D1 schema
@@ -306,6 +289,7 @@ npm run build
 - Edits sync text and captions only; replacing a photo is not mirrored.
 - A guest's message sent before passing the captcha is kept only if it was the first one (one album item at most).
 - Broadcast sends a single message; a replied-to album broadcasts its first item.
+- Only a leading `//` makes a note; anything else in a topic is sent. The health check runs every 5 minutes, so a short outage can go unreported.
 - List topics: at most 45 members (one Bot API call each within the free plan's 50 per invocation); edits are not synced; a guest's reply to a list message lands in their topic without the reply link.
 - Admin text starting with `/` is treated as a command, not sent.
 - A flood from one guest still costs one Worker request per message even when dropped.
@@ -320,6 +304,7 @@ npm run build
 
 ## 📚 Documentation
 
+- [docs/how-it-works.md](docs/how-it-works.md): architecture diagram, design decisions, measured cost per message.
 - [AGENTS.md](AGENTS.md): commands, invariants and gotchas for AI coding agents.
 - [.env.example](.env.example): every setting with a comment.
 - [migrations/0001_init.sql](migrations/0001_init.sql): database schema with column notes.

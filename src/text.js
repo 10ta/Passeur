@@ -6,13 +6,16 @@ export function displayName(user) {
   return name || (user?.username ? `@${user.username}` : `user ${user?.id ?? '?'}`);
 }
 
-/** Forum topic names are limited to 128 characters. */
-export function topicName(name, id) {
-  const suffix = ` · ${id}`;
+/** Forum topic names are limited to 128 characters. `source` is the /start link payload, if any. */
+export function topicName(name, id, source) {
+  const suffix = `${source ? ` · ${source}` : ''} · ${id}`;
   const room = 128 - suffix.length;
   const base = [...name].length > room ? [...name].slice(0, room - 1).join('') + '…' : name;
   return base + suffix;
 }
+
+/** Valid /start payloads: Telegram allows up to 64 of A-Z a-z 0-9 _ -. */
+export const parseSource = (args) => (/^[A-Za-z0-9_-]{1,64}$/.test(args ?? '') ? args : null);
 
 export function userCard(from, row) {
   const lines = [
@@ -22,6 +25,7 @@ export function userCard(from, row) {
   if (from.username) lines.push(`Username: @${esc(from.username)}`);
   if (from.language_code) lines.push(`Lang: ${esc(from.language_code)}`);
   if (from.is_premium) lines.push('Premium: ✅');
+  if (row?.source) lines.push(`来源: ${esc(row.source)}`);
   if (row) {
     lines.push(`Status: ${row.blocked ? '⛔ blocked' : '✅ active'}${row.verified ? '' : ' · unverified'}`);
     lines.push(`First seen: ${new Date(row.created_at * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`);
@@ -44,6 +48,8 @@ export const HELP = `<b>话题内命令（仅管理员）</b>
 /info — 用户信息
 /block — 拉黑此用户
 /unblock — 解除拉黑
+/forget — 删除此访客的全部记录（会先确认）
+// 开头的消息 — 内部备注，不会发给访客
 
 <b>设置</b>
 /settings — 设置面板：全局设置，以及「💬 会话设置」里每个会话的单独设置

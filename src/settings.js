@@ -20,6 +20,11 @@ export const SETTINGS = [
     help: '发送成功不打扰；发送失败时在话题里回一条说明原因。「不提醒」时失败也只记日志。',
   },
   {
+    key: 'topic_status', label: '话题状态图标', env: 'TOPIC_STATUS', def: '1', scopes: ['global'], flag: true,
+    options: [['1', '开'], ['0', '关']],
+    help: '访客发来消息后，他的话题显示“待回复”图标，你的回复送达后恢复。侧边栏一眼看出谁在等。',
+  },
+  {
     key: 'verify', label: '新访客验证', env: 'VERIFY', def: '1', scopes: ['global'], flag: true,
     options: [['1', '开'], ['0', '关']],
     help: '新访客首次发消息前要点一道算术题。',

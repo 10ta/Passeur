@@ -113,6 +113,8 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 
 送达成功时不打扰你。消息发不出去时（对方屏蔽了 bot、触发 Telegram 限流、受保护内容等），bot 会在话题里回复这条消息并说明原因。在 `/settings` 里把**送达回执**设为“不提醒”，连失败也不再提示。
 
+以 `//` 开头的消息只留在话题里，是两个管理员号之间的备注，访客看不到（名单话题里同样适用）。访客在等你回复时，他的话题在侧边栏会显示 ❗ 图标；你的回复送达后恢复原样。
+
 ### 用号1 把内容转给访客
 
 在任意聊天里点**转发** → 选管理群 → 选该访客的话题。访客收到的效果和普通转发一样，显示“转发自”原始来源。你自己的号不会露出来：来源是任一管理员账号或管理群本身的消息，会改用复制；开了转发隐私、只显示名字的管理员号也一样（按名字识别）。想隐藏来源，就在 `/settings` 里改**转发来源**（全局或单个会话）。
@@ -120,6 +122,10 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 ### 回复某条具体消息
 
 在话题里用 Telegram 的**回复**；访客看到的是对他那条消息的回复。反方向同理。
+
+### 知道访客从哪来
+
+在不同地方放不同的链接，比如 `https://t.me/<你的bot>?start=blog`（字母、数字、`_`、`-`，最长 64 个字符）。访客第一次点进来时用的链接会被记为来源，显示在他的话题名（`Alice · blog · 123456789`）、信息卡和 `/info` 里。
 
 ### 一条消息发给多个访客
 
@@ -140,6 +146,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 | 设置 | 全局 | 单个话题 | 选项 |
 |---|---|---|---|
 | 转发来源 | ✅ | ✅ | 保留（默认）· 仅频道 · 隐藏 |
+| 话题状态图标 | ✅ | ❌ | 开（默认）· 关 |
 | 新访客验证 | ✅ | ❌ | 开（默认）· 关 |
 | 访客限速 | ✅ | ❌ | 每分钟 10 · 20（默认）· 60 · 不限 |
 | 送达回执 | ✅ | ✅ | 仅失败时提醒（默认）· 不提醒 |
@@ -150,6 +157,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 | 命令 | 位置 | 作用 |
 |---|---|---|
 | `/info` | 访客话题 | 访客的名字、用户名、ID 和状态 |
+| `/forget` | 访客话题 | 删除 bot 里关于该访客的全部记录（会先确认；可选同时删除话题） |
 | `/block` / `/unblock` | 访客话题 | 静默丢弃 / 恢复接收该访客的消息 |
 | `/settings` | General | 设置面板：全局设置，以及「💬 会话设置」里的单个会话 |
 | `/newlist <名字>` | 群内任意位置 | 新建名单话题 `📤 <名字>`，附成员面板 |
@@ -165,7 +173,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 
 ## 🔧 配置
 
-连接类配置写在 `.env` 里（模板：[`.env.example`](.env.example)）；`update.sh` 每次运行都会把它们作为 secrets 推到 Worker，所以请改 `.env` 后重新运行，不要在后台直接改。表中最后五行只是初始值：`/settings` 面板会覆盖它们（见[修改设置](#修改设置)），优先级为 话题 → 面板 → `.env` → 默认。
+连接类配置写在 `.env` 里（模板：[`.env.example`](.env.example)）；`update.sh` 每次运行都会把它们作为 secrets 推到 Worker，所以请改 `.env` 后重新运行，不要在后台直接改。表中最后六行只是初始值：`/settings` 面板会覆盖它们（见[修改设置](#修改设置)），优先级为 话题 → 面板 → `.env` → 默认。
 
 | 名称 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
@@ -181,6 +189,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 | `RATE_LIMIT_PER_MIN` | ❌ | `20` | 每位访客每分钟消息数上限；`0` 为关闭 |
 | `FORWARD_SOURCE` | ❌ | `all` | `all` / `channel` / `none`：转发来的消息是否保留“转发自”（旧的 `FORWARD_CHANNEL_POSTS=1` 等同 `channel`） |
 | `RETENTION_DAYS` | ❌ | `90` | 消息之间的回复 / 编辑对应关系保留天数 |
+| `TOPIC_STATUS` | ❌ | `1` | 访客等待回复时，话题显示 ❗ 图标 |
 | `RECEIPTS` | ❌ | `fail` | `fail`：只在发送失败时在话题里回复 · `off`：从不提醒 |
 
 ## 🔄 更新与维护
@@ -208,7 +217,7 @@ npx wrangler d1 export passeur --remote --output backup.sql
 npx wrangler tail passeur
 ```
 
-错误也会发到群的 General 话题，并记录在后台的 Workers Logs 里（免费版保留 3 天）。
+错误也会发到群的 General 话题，并记录在后台的 Workers Logs 里（免费版保留 3 天）。bot 还会每 5 分钟检查一次 Telegram 能否把消息投递给它；投递失败或积压时，General 里会出现一条 ⚠️，恢复后再出现一条 ✅。
 
 ### 卸载
 
@@ -220,36 +229,7 @@ npx wrangler tail passeur
 
 ## 🧠 工作原理
 
-```mermaid
-flowchart LR
-  G[Guest DM] -- webhook --> W[Worker /webhook]
-  A1[Account 1] -- post / forward into topic --> T[Admin group topic]
-  A2[Account 2] -- post into topic --> T
-  T -- webhook --> W
-  W -- copyMessage --> T
-  W -- copyMessage --> G
-  W <--> D[(D1: users, msg_map, albums, broadcasts)]
-  C[Cron */5] --> W
-```
-
-- **话题就是收件人名单** → 访客话题对应它的访客（`users.topic_id`），名单话题对应它的成员（`list_members`）；同一条发送路径，同一条规则。
-- **话题与访客的对应是 D1 里的一行** → 任何管理员号都能回复，bot 内存里不保存访客的任何状态。
-- **手打的消息复制，转发来的消息保留来源** → 访客看到的是 bot，看不到是哪个管理员号回的；来源是管理员账号或管理群本身时一律复制。
-- **设置按 话题 → 面板 → `.env` → 默认 解析** → 全部登记在 `src/settings.js` 一张表里；单个话题的设置用同一张表，作用域为 `t:<话题>`。
-- **webhook 始终返回 200** → Telegram 不会重试，消息不会重复发送；失败会在话题或 General 里报告。
-- **相册在 `waitUntil` 里缓冲 2.5 秒** → 等待消耗的是墙钟时间而不是 CPU，符合 10 毫秒 CPU 限制；每个相册项只会被认领一次。
-- **广播每批 40 人** → 免费版每次调用最多 50 个外部请求；剩下的由每 5 分钟一次的定时任务接着发。
-- **每条消息涉及的查询都走主键或索引** → 读取行数与返回行数基本一致。
-
-### 每条消息的开销（在测试替身上实测）
-
-| 路径 | Worker 请求 | D1 查询 | D1 写入行 | CPU |
-|---|---|---|---|---|
-| 访客 → 话题 | 1 | 3 | ~2 | < 1 ms |
-| 话题 → 访客 | 1 | 2 | ~2 | < 1 ms |
-| 新访客（建话题 + 信息卡） | 1 | 8 | ~5 | < 1 ms |
-
-定时任务每天另加 288 次请求。免费版最先触到的上限是整个账号每天 100,000 次请求。
+访客话题对应那位访客，名单话题对应它的成员，这些对应关系都存成 D1 里的行；Worker 在话题和访客之间复制（或转发）消息，从不重发，失败就在群里报告。每 5 分钟的定时任务负责广播、webhook 健康检查和每日清理。架构图、设计取舍和每条消息的实测开销见 [docs/how-it-works.zh-CN.md](docs/how-it-works.zh-CN.md)。
 
 ## 📁 项目结构
 
@@ -263,6 +243,9 @@ flowchart LR
 │   ├── broadcast.js   # Batched broadcast
 │   ├── lists.js       # List topics: member panel, fan-out
 │   ├── settings.js    # Settings registry, resolution, /settings panel
+│   ├── status.js      # ❗ waiting icon on guest topics
+│   ├── health.js      # Webhook health check (cron)
+│   ├── forget.js      # /forget
 │   ├── db.js          # All D1 queries
 │   └── telegram.js    # Bot API client
 ├── migrations/        # D1 schema
@@ -306,6 +289,7 @@ npm run build
 - 编辑同步只覆盖文字和图片说明；替换图片不会同步。
 - 访客在通过验证前发的消息只保留第一条（相册最多保留其中一项）。
 - 广播只发一条消息；回复的是相册时只广播第一项。
+- 只有开头是 `//` 的才算备注；话题里的其他内容都会发出去。健康检查每 5 分钟一次，很短的故障可能不会报警。
 - 名单话题：每个名单最多 45 人（每人占 1 次 Bot API 调用，免费版每次调用上限 50）；不做编辑同步；访客回复名单消息时，回复会进他的话题，但不显示“回复了哪条”。
 - 管理员以 `/` 开头的文字会被当作命令，不会发出。
 - 单个访客刷屏时，即使消息被丢弃，每条仍会消耗一次 Worker 请求。
@@ -320,6 +304,7 @@ npm run build
 
 ## 📚 文档地图
 
+- [docs/how-it-works.zh-CN.md](docs/how-it-works.zh-CN.md)：架构图、设计取舍、每条消息的实测开销。
 - [AGENTS.md](AGENTS.md)：面向 AI 编码代理的命令、不变量和坑。
 - [.env.example](.env.example)：每个配置项及其注释。
 - [migrations/0001_init.sql](migrations/0001_init.sql)：数据库结构及字段说明。

@@ -18,7 +18,7 @@
 | Remove | `./uninstall.sh` |
 | Logs | `npx wrangler tail passeur` |
 
-There is no linter; match the existing style.
+There is no linter; match the existing style. Deeper design notes and measured costs: [docs/how-it-works.md](docs/how-it-works.md).
 
 ## Repository map
 
@@ -28,8 +28,11 @@ There is no linter; match the existing style.
 - `src/relay.js` — `sendSingle`, `sendAlbumItem`, topic create/recover, `syncEdit`. Shared by both directions via a `route` object.
 - `src/lists.js` — list topics: `/newlist`, member panel (`lm:<topic>:<user>` callbacks, saved on each tap), `fanOut` to members.
 - `src/settings.js` — `SETTINGS` registry, `getSetting(app, key, topicId?)`, `keepForwardSource`, `/settings` panel, driven from one General message: `st:h` global, `st:s:<page>` session list, `st:o:<topic>` session panel, `st:<g|topic>:<key>` cycle.
+- `src/status.js` — ❗ waiting icon: `markWaiting` after a guest message, `markAnswered` via the route's `onSent` hook; `users.waiting`; icon id cached in settings scope `i`.
+- `src/health.js` — `checkWebhook` in the 5-minute cron; alert state in settings scope `h`.
+- `src/forget.js` — `/forget` confirm flow (`fg:<topic>:r|t|x`), `db.forgetUser`.
 - `src/db.js` — the only place with SQL. `src/telegram.js` — Bot API client and `TgError` classifiers.
-- `migrations/` — D1 schema; add the next numbered file (`0005_*.sql`), never edit an applied migration.
+- `migrations/` — D1 schema; add the next numbered file (`0006_*.sql`), never edit an applied migration.
 - `scripts/env.mjs` — `.env` read/write and JSON bodies for `update.sh`.
 - `test/helpers.js` — fake D1 over `node:sqlite` (loads `migrations/`), fake Telegram with `failNext()`.
 - To change who may operate the bot, start in `src/admin.js` (`handleGroupMessage`) and `src/guest.js` (admin DM branch).
@@ -55,6 +58,10 @@ There is no linter; match the existing style.
 - `bufferAlbum(app, fromChat, msg, { group, single }, onError)` is the shared album buffer; `sendAlbumItem` (one route) and `fanOut` (many members) both use it.
 - Success is silent everywhere. Failures are reported in the topic (`reportDelivery` in `admin.js`, `deliverAll` in `lists.js`) unless the `receipts` setting is `off`. `users.receipt_msg_id` / `receipt_seen` (migration 0004) belong to the withdrawn 👌/👀 marks and are unused; leave them.
 - Telegram sends no update when a topic is deleted. List topics are retired explicitly (`st:x` → `st:X` → `db.deleteList`), which never deletes the Telegram topic. A `forum_topic_edited` with a name on a list topic updates `lists.name`.
+- Internal notes: in any topic, text or caption starting with `//` is never sent (`isInternalNote`, checked before guest and list routing). Notes and failed deliveries do not count as an answer for the status icon.
+- Source: first `/start <payload>` only (`users.source`, payload `[A-Za-z0-9_-]{1,64}`); shown in topic name, card, `/info`.
+- `/forget` clears users, msg_map, list_members and the topic's settings in one batch; deleting the Telegram topic is a separate explicit choice.
+- Settings scopes in the `settings` table: `g` global, `t:<topic>` session, `a` admin names, `i` icon cache, `h` health-check state.
 - Every per-message query must hit a primary key or index (check with `EXPLAIN QUERY PLAN` in a test).
 
 ## Do not

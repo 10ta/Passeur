@@ -8,6 +8,8 @@ import { esc, userCard, HELP, displayName } from './text.js';
 import { runBroadcastBatch } from './broadcast.js';
 import { newList, showPanel, fanOut } from './lists.js';
 import { showSettings, keepForwardSource, rememberAdmin, getSetting } from './settings.js';
+import { markAnswered } from './status.js';
+import { startForget } from './forget.js';
 
 const SERVICE_KEYS = [
   'new_chat_members', 'left_chat_member', 'new_chat_title', 'new_chat_photo', 'delete_chat_photo',
@@ -18,6 +20,8 @@ const SERVICE_KEYS = [
   'boost_added', 'chat_background_set', 'write_access_allowed',
 ];
 const isService = (msg) => SERVICE_KEYS.some((k) => k in msg);
+/** Admin-only notes inside a topic: text or caption starting with `//`. */
+export const isInternalNote = (msg) => /^\s*\/\//.test(msg.text ?? msg.caption ?? '');
 
 /** Replies inside the same topic (or General) as `msg`. */
 export function replyIn(app, msg, text, extra = {}) {
@@ -66,6 +70,7 @@ export async function handleGroupMessage(app, msg) {
   const threadId = msg.is_topic_message ? msg.message_thread_id : null;
   if (cmd) return handleCommand(app, msg, cmd, threadId);
   if (!threadId) return; // chatter in General stays in the group
+  if (isInternalNote(msg)) return; // `// …` stays in the topic, in guest and list topics alike
 
   const user = await db.getUserByTopic(threadId);
   if (!user) {
@@ -94,6 +99,7 @@ async function relayToGuest(app, msg, user) {
     forward: await keepForwardSource(app, msg, user.topic_id),
     replyTo,
     mapRow: (src, dst) => ({ guestId: user.user_id, guestMsgId: dst, topicMsgId: src, dir: DIR_OUT }),
+    onSent: () => markAnswered(app, user),
   };
   const onError = (err) => reportDelivery(app, msg, err);
   try {
@@ -138,6 +144,9 @@ async function handleCommand(app, msg, cmd, threadId) {
       if (!user) return needUser();
       await db.updateUser(user.user_id, { blocked: 1 });
       return replyIn(app, msg, '⛔ 已拉黑。对方的消息将被静默丢弃。');
+    case 'forget':
+      if (!user) return needUser();
+      return startForget(app, msg, user, replyIn);
     case 'unblock':
       if (!user) return needUser();
       await db.updateUser(user.user_id, { blocked: 0 });

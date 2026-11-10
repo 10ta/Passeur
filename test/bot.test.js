@@ -154,7 +154,7 @@ test('profile change renames the topic', async () => {
   const u = guest(607);
   u.message.from.first_name = 'Renamed';
   await s.send(u);
-  assert.equal(s.tg.of('editForumTopic')[0].params.name, 'Renamed · 607');
+  assert.equal(s.tg.of('editForumTopic').find((c) => c.params.name)?.params.name, 'Renamed · 607');
 });
 
 // ---------------------------------------------------------------- captcha
@@ -612,8 +612,8 @@ test('/settings in General shows global settings with their source', async () =>
   assert.match(p.text, /转发来源<\/b>：保留（默认）/);
   assert.match(p.text, /新访客验证<\/b>：关（\.env）/);
   assert.deepEqual(p.reply_markup.inline_keyboard.map((r) => r[0].callback_data),
-    ['st:g:forward_source', 'st:g:receipts', 'st:g:verify', 'st:g:rate_limit', 'st:g:retention_days', 'st:s:0']);
-  assert.equal(p.reply_markup.inline_keyboard[2][0].text, '新访客验证：关（.env） ▸', 'button shows the effective value');
+    ['st:g:forward_source', 'st:g:receipts', 'st:g:topic_status', 'st:g:verify', 'st:g:rate_limit', 'st:g:retention_days', 'st:s:0']);
+  assert.equal(p.reply_markup.inline_keyboard[3][0].text, '新访客验证：关（.env） ▸', 'button shows the effective value');
 });
 
 test('global panel cycles values, overrides .env, and "默认" falls back again', async () => {
@@ -922,4 +922,150 @@ test('/check shows admin names', async () => {
     ? { status: 'administrator', is_anonymous: false, user: { id: ADMIN2, first_name: 'Σκῖps' } } : orig(m, p));
   await s.send(inGeneral(ADMIN1, cmd('/check')));
   assert.match(s.tg.of('sendMessage')[0].params.text, new RegExp(`${ADMIN2}</code>（Σκῖps）已就绪`));
+});
+
+// ---------------------------------------------------------------- internal notes
+
+test('// notes in a topic are never sent (guest and list topics, text and captions)', async () => {
+  const s = setup();
+  await s.send(guest(6101));
+  const t = await listSetup(s, [6102]);
+  await listCb(s, t, 6102);
+  s.tg.clear();
+  await s.send(inTopic(500, ADMIN1, { text: '// 这人上周问过价格' }));
+  await s.send(inTopic(500, ADMIN2, { text: undefined, caption: '  //内部', photo: [{}] }));
+  await s.send(inTopic(t, ADMIN1, { text: '//别群发' }));
+  await s.flush();
+  assert.equal(s.tg.calls.length, 0);
+  await s.send(inTopic(500, ADMIN1, { text: 'https://example.com // not a note' }));
+  assert.equal(s.tg.of('copyMessage').length, 1, 'only a leading // counts');
+});
+
+// ---------------------------------------------------------------- topic status icon
+
+const icons = (s) => s.tg.of('editForumTopic').filter((c) => 'icon_custom_emoji_id' in c.params)
+  .map((c) => [c.params.message_thread_id, c.params.icon_custom_emoji_id]);
+
+test('status icon: waiting after the guest writes, cleared once a reply is delivered', async () => {
+  const s = setup();
+  await s.send(guest(6201));
+  assert.deepEqual(icons(s), [[500, 'icon-waiting']], 'picked ❗ from the allowed icons');
+  s.tg.clear();
+  await s.send(guest(6201));
+  assert.deepEqual(icons(s), [], 'no repeat while still waiting');
+  await s.send(inTopic(500, ADMIN1, { text: '// note' }));
+  assert.deepEqual(icons(s), [], 'a note is not an answer');
+  s.tg.failNext('copyMessage', 403, 'Forbidden: bot was blocked by the user');
+  await s.send(inTopic(500, ADMIN1));
+  assert.deepEqual(icons(s), [], 'a failed delivery is not an answer');
+  await s.send(inTopic(500, ADMIN1));
+  assert.deepEqual(icons(s), [[500, '']]);
+  s.tg.clear();
+  await s.send(inTopic(500, ADMIN2));
+  assert.deepEqual(icons(s), [], 'already answered');
+  assert.equal(s.tg.of('getForumTopicIconStickers').length, 0, 'icon id is cached');
+});
+
+test('status icon: album replies clear it; the setting can switch it off', async () => {
+  const s = setup();
+  await s.send(guest(6301));
+  s.tg.clear();
+  for (const id of [nextMsgId(), nextMsgId()]) await s.send(inTopic(500, ADMIN1, { message_id: id, media_group_id: 'S1', text: undefined }));
+  await s.flush();
+  assert.deepEqual(icons(s), [[500, '']]);
+  const s2 = setup({ TOPIC_STATUS: '0' });
+  await s2.send(guest(6302));
+  assert.deepEqual(icons(s2), []);
+});
+
+// ---------------------------------------------------------------- source links
+
+test('source: /start <source> is kept (first touch) and shown in the topic name and card', async () => {
+  const s = setup();
+  await s.send(guest(6401, cmd('/start blog')));
+  await s.send(guest(6401, cmd('/start xhs'))); // later links don't overwrite
+  assert.equal(s.row('SELECT source FROM users WHERE user_id = 6401').source, 'blog');
+  await s.send(guest(6401));
+  assert.equal(s.tg.of('createForumTopic')[0].params.name, 'Guest6401 · blog · 6401');
+  assert.match(s.tg.of('sendMessage').find((c) => c.params.message_thread_id === 500).params.text, /来源: blog/);
+  s.tg.clear();
+  await s.send(inTopic(500, ADMIN1, cmd('/info')));
+  assert.match(s.tg.of('sendMessage')[0].params.text, /来源: blog/);
+});
+
+test('source: a link opened by an existing guest renames their topic; bad payloads ignored', async () => {
+  const s = setup();
+  await s.send(guest(6501));
+  s.tg.clear();
+  await s.send(guest(6501, cmd('/start bad<payload>')));
+  assert.equal(s.row('SELECT source FROM users WHERE user_id = 6501').source, null);
+  await s.send(guest(6501, cmd('/start tg_group')));
+  assert.equal(s.tg.of('editForumTopic').find((c) => c.params.name)?.params.name, 'Guest6501 · tg_group · 6501');
+});
+
+// ---------------------------------------------------------------- /forget
+
+test('/forget asks first, then erases the guest; they come back as new', async () => {
+  const s = setup();
+  await s.send(guest(6601));
+  s.d1.raw.exec("UPDATE users SET verified = 1, blocked = 1, source = 'blog' WHERE user_id = 6601");
+  s.d1.raw.exec('INSERT INTO msg_map VALUES (6601, 1, 900, 0, 0)');
+  s.d1.raw.exec("INSERT INTO settings VALUES ('t:500', 'receipts', 'off')");
+  s.tg.clear();
+  await s.send(inTopic(500, ADMIN1, cmd('/forget')));
+  const ask = s.tg.of('sendMessage')[0].params;
+  assert.match(ask.text, /拉黑状态/);
+  assert.deepEqual(ask.reply_markup.inline_keyboard.map((r) => r[0].callback_data), ['fg:500:r', 'fg:500:t', 'fg:0:x']);
+  assert.ok(s.row('SELECT * FROM users WHERE user_id = 6601'), 'nothing erased before confirming');
+
+  const press = (data, from = ADMIN1) => s.send({ callback_query: { id: 'q', from: { id: from }, data,
+    message: { message_id: 4444, chat: { id: GROUP, type: 'supergroup' } } } });
+  await press('fg:500:r', 33);
+  assert.ok(s.row('SELECT * FROM users WHERE user_id = 6601'), 'non-admin refused');
+  await press('fg:500:r');
+  assert.equal(s.row('SELECT * FROM users WHERE user_id = 6601'), undefined);
+  assert.equal(s.rows('SELECT * FROM msg_map WHERE guest_id = 6601').length, 0);
+  assert.equal(s.rows("SELECT * FROM settings WHERE scope = 't:500'").length, 0);
+  assert.equal(s.tg.of('deleteForumTopic').length, 0, 'topic kept');
+
+  s.tg.clear();
+  await s.send(guest(6601));
+  assert.equal(s.tg.of('createForumTopic').length, 1, 'treated as a brand-new guest: new topic');
+  assert.equal(s.row('SELECT blocked FROM users WHERE user_id = 6601').blocked, 0, 'block was erased too');
+});
+
+test('/forget can also delete the topic; only inside a guest topic', async () => {
+  const s = setup();
+  await s.send(guest(6701));
+  await s.send(inGeneral(ADMIN1, cmd('/forget')));
+  assert.match(s.tg.of('sendMessage').at(-1).params.text, /只能在用户的话题/);
+  await s.send({ callback_query: { id: 'q', from: { id: ADMIN1 }, data: 'fg:500:t',
+    message: { message_id: 4444, chat: { id: GROUP, type: 'supergroup' } } } });
+  assert.equal(s.tg.of('deleteForumTopic')[0].params.message_thread_id, 500);
+  assert.equal(s.row('SELECT * FROM users WHERE user_id = 6701'), undefined);
+});
+
+// ---------------------------------------------------------------- webhook health
+
+test('webhook health: one alert while broken, one note when recovered', async () => {
+  const s = setup();
+  const now = Math.floor(Date.now() / 1000);
+  let info = { pending_update_count: 42, last_error_date: now - 60, last_error_message: 'Wrong response from the webhook: 500' };
+  const orig = s.tg.call;
+  s.tg.call = async (m, p) => (m === 'getWebhookInfo' ? info : orig(m, p));
+  const cron = () => worker.scheduled({ scheduledTime: Date.UTC(2026, 0, 1, 12, 0) }, s.env, { waitUntil() {} });
+  // scheduled() builds its own app; route its Telegram calls through the fake.
+  const { createApp } = await import('../src/index.js');
+  const { checkWebhook } = await import('../src/health.js');
+  const app = () => createApp(s.env, { waitUntil() {} }, { tg: s.tg });
+  await checkWebhook(app());
+  await checkWebhook(app());
+  const alerts = s.tg.of('sendMessage').filter((c) => /投递/.test(c.params.text));
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0].params.text, /500.*积压 42/);
+  info = { pending_update_count: 0, last_error_date: now - 3600 };
+  await checkWebhook(app());
+  await checkWebhook(app());
+  assert.equal(s.tg.of('sendMessage').filter((c) => /已恢复/.test(c.params.text)).length, 1);
+  assert.ok(cron);
 });

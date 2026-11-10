@@ -78,6 +78,9 @@ export function fakeTelegram() {
         case 'copyMessages':
         case 'forwardMessages': return params.message_ids.map(() => ({ message_id: nextId++ }));
         case 'getChat': return { id: params.chat_id, is_forum: true };
+        case 'getForumTopicIconStickers':
+          return [{ emoji: '💡', custom_emoji_id: 'icon-idea' }, { emoji: '❗️', custom_emoji_id: 'icon-waiting' }];
+        case 'getWebhookInfo': return { url: 'https://x.example/webhook', pending_update_count: 0 };
         case 'getChatMember':
           return { status: 'administrator', can_manage_topics: true, is_anonymous: false, user: { id: params.user_id } };
         default: return { message_id: nextId++ };

@@ -2,10 +2,11 @@
 
 import { DIR_IN, now } from './db.js';
 import { TgError } from './telegram.js';
-import { displayName, topicName, T } from './text.js';
+import { displayName, topicName, parseSource, T } from './text.js';
 import { ensureTopic, recreateTopic, sendSingle, sendAlbumItem, syncEdit } from './relay.js';
 import { parseCommand } from './commands.js';
 import { getSetting, rememberAdmin } from './settings.js';
+import { markWaiting } from './status.js';
 
 const CAPTCHA_TTL = 600; // a challenge older than this is replaced on the next message
 const CAPTCHA_MAX_FAILS = 3;
@@ -33,6 +34,13 @@ export async function handleGuestMessage(app, msg) {
   if (user.blocked) return;
 
   if (cmd?.name === 'start') {
+    // First-touch source from a t.me/<bot>?start=<source> link; later links don't overwrite it.
+    const source = parseSource(cmd.args);
+    if (source && !user.source) {
+      await db.updateUser(from.id, { source });
+      user.source = source;
+      if (user.topic_id > 0) await renameTopic(app, user, displayName(from));
+    }
     await reply(app, msg.chat.id, cfg.welcomeText);
     if (verify && !user.verified) await challenge(app, msg.chat.id, user, null);
     return;
@@ -53,6 +61,7 @@ export async function handleGuestMessage(app, msg) {
 
   await refreshProfile(app, from, user);
   await relayToTopic(app, msg, from, user);
+  await markWaiting(app, user);
 }
 
 /** Relays a guest message (or a pending message id after captcha) into the topic. */
@@ -61,6 +70,7 @@ export async function relayToTopic(app, msg, from, user) {
   let topicId;
   try {
     topicId = await ensureTopic(app, from, user);
+    user.topic_id = topicId;
   } catch (err) {
     // e.g. wrong GROUP_ID or the bot lost "Manage Topics": tell the guest, then report.
     await guestFailure(app, from.id, err, false);
@@ -115,11 +125,13 @@ async function refreshProfile(app, from, user) {
   const username = from.username ?? null;
   if (name === user.name && username === (user.username ?? null)) return;
   await app.db.updateUser(from.id, { name, username });
-  if (user.topic_id > 0) {
-    await app.tg.call('editForumTopic', {
-      chat_id: app.cfg.groupId, message_thread_id: user.topic_id, name: topicName(name, from.id),
-    }).catch((err) => console.error('rename topic failed', err.message));
-  }
+  if (user.topic_id > 0) await renameTopic(app, user, name);
+}
+
+async function renameTopic(app, user, name) {
+  await app.tg.call('editForumTopic', {
+    chat_id: app.cfg.groupId, message_thread_id: user.topic_id, name: topicName(name, user.user_id, user.source),
+  }).catch((err) => console.error('rename topic failed', err.message));
 }
 
 // ---------------------------------------------------------------------------
