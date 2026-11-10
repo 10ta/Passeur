@@ -26,8 +26,9 @@ There is no linter; match the existing style.
 - `src/guest.js` — everything in a guest's private chat: `/start`, captcha, rate limit, relay to topic, edit sync.
 - `src/admin.js` — the admin forum group: relay topic → guest, commands, `/check`, delivery error reports.
 - `src/relay.js` — `sendSingle`, `sendAlbumItem`, topic create/recover, `syncEdit`. Shared by both directions via a `route` object.
+- `src/lists.js` — list topics: `/newlist`, member panel (`lm:<topic>:<user>` callbacks, saved on each tap), `fanOut` to members.
 - `src/db.js` — the only place with SQL. `src/telegram.js` — Bot API client and `TgError` classifiers.
-- `migrations/` — D1 schema; add `0002_*.sql`, never edit an applied migration.
+- `migrations/` — D1 schema; add the next numbered file (`0003_*.sql`), never edit an applied migration.
 - `scripts/env.mjs` — `.env` read/write and JSON bodies for `update.sh`.
 - `test/helpers.js` — fake D1 over `node:sqlite` (loads `migrations/`), fake Telegram with `failNext()`.
 - To change who may operate the bot, start in `src/admin.js` (`handleGroupMessage`) and `src/guest.js` (admin DM branch).
@@ -48,6 +49,9 @@ There is no linter; match the existing style.
 - Topic creation is claimed by setting `users.topic_id = -user_id`; other requests poll. Keep `claimTopic` / `resetTopic` conditional updates.
 - Albums: `markAlbumSent` must happen before `takeAlbumItems`, and taking is a single D1 batch (one transaction). This is what makes each item go out exactly once.
 - Free plan: ≤ 50 external subrequests and 10 ms CPU per invocation. Broadcast `BATCH = 40` leaves room for the other calls; long waits go in `waitUntil` (≤ 30 s).
+- Topics are recipient lists. Guest topics (`users.topic_id`) are strictly 1:1 and keep reply threading, edit sync and inbound relay; list topics (`lists`, `list_members`) are outbound-only fan-out without `msg_map` rows. Never add members to a guest topic: the guest's replies would land elsewhere.
+- List budget: `MAX_MEMBERS = 45` × 1 call + 1 reaction/report ≤ 50 (a test asserts it). Raising it needs batching via the cron.
+- `bufferAlbum(app, fromChat, msg, { group, single }, onError)` is the shared album buffer; `sendAlbumItem` (one route) and `fanOut` (many members) both use it.
 - Every per-message query must hit a primary key or index (check with `EXPLAIN QUERY PLAN` in a test).
 
 ## Do not

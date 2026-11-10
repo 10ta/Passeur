@@ -112,6 +112,20 @@ export function createDb(d1) {
       const r = await one('SELECT COUNT(*) AS users, SUM(blocked) AS blocked, SUM(verified) AS verified FROM users');
       return { users: r?.users ?? 0, blocked: r?.blocked ?? 0, verified: r?.verified ?? 0 };
     },
+    // ---- list topics ----
+    createList: (topicId, name) => run('INSERT INTO lists (topic_id, name, created_at) VALUES (?, ?, ?)', topicId, name, now()),
+    getList: (topicId) => one('SELECT * FROM lists WHERE topic_id = ?', topicId),
+    /** Members with their state, for sending and for the panel. */
+    listMembers: (topicId) => all(
+      `SELECT u.user_id, u.name, u.blocked FROM list_members m JOIN users u ON u.user_id = m.user_id
+       WHERE m.topic_id = ? ORDER BY u.name`, topicId),
+    addMember: (topicId, userId) => run('INSERT OR IGNORE INTO list_members (topic_id, user_id) VALUES (?, ?)', topicId, userId),
+    removeMember: (topicId, userId) => run('DELETE FROM list_members WHERE topic_id = ? AND user_id = ?', topicId, userId),
+    /** Guests with a topic, most recently active first (panel only; not a per-message query). */
+    recentGuests: (limit) => all(
+      `SELECT u.user_id, u.name, u.blocked FROM users u WHERE u.topic_id > 0
+       ORDER BY COALESCE((SELECT MAX(m.created_at) FROM msg_map m WHERE m.guest_id = u.user_id), u.created_at) DESC
+       LIMIT ?`, limit),
     listBlocked: (limit) => all('SELECT user_id, name, username FROM users WHERE blocked = 1 ORDER BY user_id LIMIT ?', limit),
 
     async cleanup(retentionDays) {

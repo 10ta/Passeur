@@ -38,13 +38,13 @@ export async function sendSingle(app, route, srcMsgId) {
 
 /**
  * Handles one item of a media group. The first item to arrive becomes the
- * leader: it waits ALBUM_WAIT_MS (wall time, no CPU) in waitUntil, then sends
- * every buffered item in one copyMessages call so the album stays grouped.
- * Items arriving after the album went out are sent on their own.
+ * leader: it waits ALBUM_WAIT_MS (wall time, no CPU) in waitUntil, then hands
+ * every buffered item to `send.group(ids)` so the album stays grouped. Items
+ * arriving after the album went out go through `send.single(id)`.
  * `onError(err)` reports failures that happen after the webhook returned.
  */
-export async function sendAlbumItem(app, route, msg, onError) {
-  const key = `${route.fromChat}:${msg.media_group_id}`;
+export async function bufferAlbum(app, fromChat, msg, send, onError) {
+  const key = `${fromChat}:${msg.media_group_id}`;
   await app.db.addAlbumItem(key, msg.message_id);
   if (await app.db.claimAlbum(key)) {
     app.waitUntil((async () => {
@@ -52,7 +52,7 @@ export async function sendAlbumItem(app, route, msg, onError) {
         await app.sleep(ALBUM_WAIT_MS);
         await app.db.markAlbumSent(key); // must precede take: see takeAlbumItem below
         const ids = await app.db.takeAlbumItems(key);
-        if (ids.length) await sendGroup(app, route, ids);
+        if (ids.length) await send.group(ids);
       } catch (err) {
         await onError(err);
       }
@@ -63,8 +63,16 @@ export async function sendAlbumItem(app, route, msg, onError) {
   // so if we read sent=1 here, our row either was taken by the album or is
   // still ours to take — never both).
   if ((await app.db.albumSent(key)) && (await app.db.takeAlbumItem(key, msg.message_id))) {
-    await sendSingle(app, route, msg.message_id);
+    await send.single(msg.message_id);
   }
+}
+
+/** One album item along a single route (guest <-> their topic). */
+export function sendAlbumItem(app, route, msg, onError) {
+  return bufferAlbum(app, route.fromChat, msg, {
+    group: (ids) => sendGroup(app, route, ids),
+    single: (id) => sendSingle(app, route, id),
+  }, onError);
 }
 
 async function sendGroup(app, route, ids) {

@@ -6,6 +6,7 @@ import { createDb } from './db.js';
 import { handleGuestMessage, handleGuestEdit, handleCaptchaCallback } from './guest.js';
 import { handleGroupMessage, handleGroupEdit } from './admin.js';
 import { runBroadcastBatch } from './broadcast.js';
+import { handleListCallback } from './lists.js';
 
 const CLEANUP_HOUR_UTC = 3;
 
@@ -42,6 +43,7 @@ export async function handleUpdate(app, update) {
   }
   const cq = update.callback_query;
   if (cq && typeof cq.data === 'string' && cq.data.startsWith('cap:')) return handleCaptchaCallback(app, cq);
+  if (cq && typeof cq.data === 'string' && cq.data.startsWith('lm:')) return handleListCallback(app, cq);
   if (cq) await app.tg.call('answerCallbackQuery', { callback_query_id: cq.id }).catch(() => {});
 }
 

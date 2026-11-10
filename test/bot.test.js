@@ -435,3 +435,142 @@ test('admins who DM the bot are pointed to the group, not relayed', async () => 
   assert.equal(s.tg.of('createForumTopic').length, 0);
   assert.match(s.tg.of('sendMessage')[0].params.text, /管理员/);
 });
+
+// ---------------------------------------------------------------- list topics
+
+/** Creates guests (each gets a guest topic) and a list topic; returns its thread id. */
+async function listSetup(s, guestIds, name = '客户') {
+  for (const id of guestIds) await s.send(guest(id));
+  s.tg.clear();
+  await s.send(inGeneral(ADMIN1, { text: `/newlist ${name}`, entities: cmdEntities('/newlist') }));
+  const topic = s.tg.of('createForumTopic')[0];
+  assert.equal(topic.params.name, `📤 ${name}`);
+  return 500 + guestIds.length; // fake thread ids are sequential
+}
+const listCb = (s, topicId, userId, from = ADMIN1) => s.send({ callback_query: {
+  id: 'q', from: { id: from }, data: `lm:${topicId}:${userId}`,
+  message: { message_id: 8888, chat: { id: GROUP, type: 'supergroup' } } } });
+
+test('/newlist creates a list topic with a panel inside; /list re-posts it', async () => {
+  const s = setup();
+  const t = await listSetup(s, [2101, 2102]);
+  const panel = s.tg.of('sendMessage').find((c) => c.params.message_thread_id === t);
+  assert.match(panel.params.text, /名单「客户」：0\/45/);
+  assert.deepEqual(panel.params.reply_markup.inline_keyboard.flat().map((b) => b.callback_data).sort(),
+    [`lm:${t}:2101`, `lm:${t}:2102`]);
+  assert.match(s.tg.of('sendMessage').at(-1).params.text, /已创建名单话题/);
+  s.tg.clear();
+  await s.send(inTopic(t, ADMIN1, cmd('/list')));
+  assert.equal(s.tg.of('sendMessage')[0].params.message_thread_id, t);
+  await s.send(inGeneral(ADMIN1, cmd('/list')));
+  assert.match(s.tg.of('sendMessage')[1].params.text, /名单话题里发 \/list/);
+});
+
+test('panel toggles membership in D1 and re-renders; non-admins are refused', async () => {
+  const s = setup();
+  const t = await listSetup(s, [2201, 2202]);
+  await listCb(s, t, 2201);
+  assert.ok(s.row('SELECT 1 AS x FROM list_members WHERE topic_id = ? AND user_id = 2201', t));
+  const edit = s.tg.of('editMessageText').at(-1).params;
+  assert.match(edit.text, /1\/45/);
+  assert.equal(edit.reply_markup.inline_keyboard.flat()[0].text, '☑ Guest2201', 'members listed first');
+  await listCb(s, t, 2201);
+  assert.equal(s.rows('SELECT * FROM list_members').length, 0, 'second tap removes');
+  await listCb(s, t, 2202, 33);
+  assert.equal(s.tg.of('answerCallbackQuery').at(-1).params.text, '无权限');
+  assert.equal(s.rows('SELECT * FROM list_members').length, 0);
+});
+
+test('list is capped at 45 members', async () => {
+  const s = setup();
+  const t = await listSetup(s, [2301]);
+  const ins = s.d1.raw.prepare('INSERT INTO users (user_id, name, verified, topic_id, created_at) VALUES (?, ?, 1, ?, 0)');
+  for (let i = 0; i < 46; i++) ins.run(3000 + i, `u${i}`, 9000 + i);
+  for (let i = 0; i < 45; i++) s.d1.raw.prepare('INSERT INTO list_members VALUES (?, ?)').run(t, 3000 + i);
+  await listCb(s, t, 3045);
+  const a = s.tg.of('answerCallbackQuery').at(-1).params;
+  assert.equal(a.show_alert, true);
+  assert.match(a.text, /最多 45/);
+});
+
+test('a message in a list topic goes to every non-blocked member; 👌 on success', async () => {
+  const s = setup();
+  const t = await listSetup(s, [2401, 2402, 2403]);
+  for (const id of [2401, 2402, 2403]) await listCb(s, t, id);
+  s.d1.raw.exec('UPDATE users SET blocked = 1 WHERE user_id = 2403');
+  s.tg.clear();
+  const m = inTopic(t, ADMIN2, { text: 'news for everyone' });
+  await s.send(m);
+  await s.flush();
+  const copies = s.tg.of('copyMessage');
+  assert.deepEqual(copies.map((c) => c.params.chat_id).sort(), [2401, 2402]);
+  assert.ok(copies.every((c) => c.params.from_chat_id === GROUP && c.params.message_id === m.message.message_id));
+  assert.equal(s.tg.of('setMessageReaction')[0].params.message_id, m.message.message_id);
+  assert.equal(s.tg.of('sendMessage').length, 0, 'no report when all succeed');
+  assert.equal(s.rows('SELECT * FROM msg_map WHERE topic_msg_id = ?', m.message.message_id).length, 0);
+});
+
+test('list fan-out reports 403 and stops at 429; empty list is refused; commands are not sent', async () => {
+  const s = setup();
+  const t = await listSetup(s, [2501, 2502, 2503]);
+  s.tg.clear();
+  await s.send(inTopic(t, ADMIN1));
+  assert.match(s.tg.of('sendMessage')[0].params.text, /名单是空的/);
+  for (const id of [2501, 2502, 2503]) await listCb(s, t, id);
+  const order = s.rows('SELECT u.user_id FROM list_members m JOIN users u USING (user_id) WHERE m.topic_id = ? ORDER BY u.name', t).map((r) => r.user_id);
+  s.tg.failNext('copyMessage', 403, 'Forbidden: bot was blocked by the user', (p) => p.chat_id === order[0]);
+  s.tg.failNext('copyMessage', 429, 'Too Many Requests', (p) => p.chat_id === order[2], { retry_after: 3 });
+  s.tg.clear();
+  await s.send(inTopic(t, ADMIN1));
+  await s.flush();
+  const report = s.tg.of('sendMessage').at(-1).params;
+  assert.equal(report.message_thread_id, t);
+  assert.match(report.text, /已发送 1\/3/);
+  assert.match(report.text, /已屏蔽 bot/);
+  assert.match(report.text, /限流/);
+  assert.equal(s.tg.of('setMessageReaction').length, 0);
+  s.tg.clear();
+  await s.send(inTopic(t, ADMIN1, cmd('/stats')));
+  assert.equal(s.tg.of('copyMessage').length, 0);
+});
+
+test('an album in a list topic goes to each member as one group', async () => {
+  const s = setup();
+  const t = await listSetup(s, [2601, 2602]);
+  for (const id of [2601, 2602]) await listCb(s, t, id);
+  s.tg.clear();
+  const ids = [nextMsgId(), nextMsgId(), nextMsgId()];
+  await Promise.all(ids.map((id) => s.send(inTopic(t, ADMIN1, { message_id: id, media_group_id: 'L1', text: undefined }))));
+  await s.flush();
+  const groups = s.tg.of('copyMessages');
+  assert.deepEqual(groups.map((c) => c.params.chat_id).sort(), [2601, 2602]);
+  assert.ok(groups.every((c) => JSON.stringify(c.params.message_ids) === JSON.stringify(ids)));
+  assert.equal(s.tg.of('setMessageReaction').length, 1);
+});
+
+test('guest topics are unaffected and a list topic never receives guest messages', async () => {
+  const s = setup();
+  const t = await listSetup(s, [2701]);
+  await listCb(s, t, 2701);
+  s.tg.clear();
+  await s.send(guest(2701));
+  assert.equal(s.tg.of('copyMessage')[0].params.message_thread_id, 500, 'goes to the guest topic');
+  s.tg.clear();
+  await s.send(inTopic(500, ADMIN1));
+  assert.equal(s.tg.of('copyMessage').length, 1, 'guest topic still 1:1');
+});
+
+test('a full 45-member fan-out stays within 50 Bot API calls', async () => {
+  const s = setup();
+  const t = await listSetup(s, [2801]);
+  const ins = s.d1.raw.prepare('INSERT INTO users (user_id, name, verified, topic_id, created_at) VALUES (?, ?, 1, ?, 0)');
+  for (let i = 0; i < 45; i++) {
+    ins.run(5000 + i, `m${i}`, 8000 + i);
+    s.d1.raw.prepare('INSERT INTO list_members VALUES (?, ?)').run(t, 5000 + i);
+  }
+  s.tg.clear();
+  await s.send(inTopic(t, ADMIN1));
+  await s.flush();
+  assert.equal(s.tg.of('copyMessage').length, 45);
+  assert.ok(s.tg.calls.length <= 50, `calls: ${s.tg.calls.length}`);
+});

@@ -6,6 +6,7 @@ import { parseCommand } from './commands.js';
 import { sendSingle, sendAlbumItem, syncEdit } from './relay.js';
 import { esc, userCard, HELP } from './text.js';
 import { runBroadcastBatch } from './broadcast.js';
+import { newList, showPanel, fanOut } from './lists.js';
 
 const SERVICE_KEYS = [
   'new_chat_members', 'left_chat_member', 'new_chat_title', 'new_chat_photo', 'delete_chat_photo',
@@ -60,7 +61,11 @@ export async function handleGroupMessage(app, msg) {
   if (!threadId) return; // chatter in General stays in the group
 
   const user = await db.getUserByTopic(threadId);
-  if (!user) return; // a topic the admins made for themselves
+  if (!user) {
+    // Not a guest topic: a list topic fans out to its members; any other topic is the admins' own.
+    if (await db.getList(threadId)) await fanOut(app, msg);
+    return;
+  }
   if (user.blocked) {
     await replyIn(app, msg, '⛔ 该用户已被拉黑，消息未发送。/unblock 后才能联系。');
     return;
@@ -152,6 +157,11 @@ async function handleCommand(app, msg, cmd, threadId) {
       app.waitUntil(runBroadcastBatch(app).catch((err) => console.error('broadcast batch failed', err.message)));
       return;
     }
+    case 'newlist':
+      return newList(app, msg, cmd.args, replyIn);
+    case 'list':
+      if (threadId && (await db.getList(threadId))) return showPanel(app, threadId);
+      return replyIn(app, msg, '在名单话题里发 /list；还没有名单就先 /newlist 名字。');
     case 'cancel': {
       const n = await db.cancelBroadcasts();
       return replyIn(app, msg, n ? '已取消广播。' : '没有进行中的广播。');

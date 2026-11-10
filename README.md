@@ -49,6 +49,7 @@ You want strangers to reach you on Telegram without exposing your account, and y
 - **Albums stay albums** — media groups are buffered and sent in one piece, in both directions.
 - **Replies and edits follow** — replying to a specific message threads it on the other side; text and caption edits are mirrored.
 - **Spam control** — a one-tap math captcha for new guests, a per-guest rate limit, and `/block`.
+- **List topics** — a topic can stand for a group of guests: whatever you post or forward there goes to everyone on its list.
 - **Broadcast** — send one message to every verified guest, batched to stay within free-plan limits.
 - **Free to run** — about 2 Worker requests, ~25 D1 rows read and ~2 written per message; a personal bot uses well under 1% of the free quota.
 
@@ -118,12 +119,24 @@ From any chat, **Forward** → pick the admin group → pick the guest's topic. 
 
 Use Telegram's **Reply** in the topic; the guest sees it as a reply to their own message. It works the other way too.
 
+### Send one message to several guests
+
+A topic is a recipient list: a guest's own topic reaches that one guest, a **list topic** reaches everyone ticked on its list.
+
+1. `/newlist Clients` creates the topic `📤 Clients` with a panel inside. Tick guests (☐/☑); each tap is saved at once, up to 45 people. `/list` in that topic brings the panel back.
+2. Post or forward anything into `📤 Clients` — text, media, albums. It is copied to every member who isn't blocked.
+3. 👌 appears on your message when everyone got it; otherwise the bot replies with who didn't and why.
+
+Guest topics always stay one-to-one, because a guest's replies come back to their own topic. Keep conversations between your admin accounts out of list topics: every message there is sent.
+
 ### Commands
 
 | Command | Where | What it does |
 |---|---|---|
 | `/info` | guest topic | Guest's name, username, ID and status |
 | `/block` / `/unblock` | guest topic | Silently drop / accept the guest's messages |
+| `/newlist <name>` | anywhere in the group | Create a list topic `📤 <name>` with its member panel |
+| `/list` | list topic | Post the member panel again |
 | `/broadcast` | General, as a reply | Send the replied message to every verified, unblocked guest |
 | `/cancel` | General | Stop a running broadcast |
 | `/blocked`, `/stats` | anywhere in the group | Blocked list; user counts |
@@ -201,6 +214,7 @@ flowchart LR
   C[Cron */5] --> W
 ```
 
+- **A topic is a recipient list** → a guest topic maps to its guest (`users.topic_id`), a list topic to its members (`list_members`); one send path, one rule.
 - **Topic ↔ guest is a row in D1** → any admin account can answer, and nothing about the guest lives in the bot's memory.
 - **Copy, not forward, by default** → the guest sees the bot, never the admin account that answered.
 - **The webhook always returns 200** → Telegram never retries, so a message is never sent twice; failures are reported in the topic or General instead.
@@ -228,6 +242,7 @@ The cron adds 288 requests/day. On the free plan the first limit you'd reach is 
 │   ├── admin.js       # Admin group: relay to guest, commands, /check
 │   ├── relay.js       # copy/forward, albums, topic creation and recovery
 │   ├── broadcast.js   # Batched broadcast
+│   ├── lists.js       # List topics: member panel, fan-out
 │   ├── db.js          # All D1 queries
 │   └── telegram.js    # Bot API client
 ├── migrations/        # D1 schema
@@ -265,6 +280,7 @@ npm run build
 - Edits sync text and captions only; replacing a photo is not mirrored.
 - A guest's message sent before passing the captcha is kept only if it was the first one (one album item at most).
 - Broadcast sends a single message; a replied-to album broadcasts its first item.
+- List topics: at most 45 members (one Bot API call each within the free plan's 50 per invocation); edits are not synced; a guest's reply to a list message lands in their topic without the reply link.
 - Admin text starting with `/` is treated as a command, not sent.
 - A flood from one guest still costs one Worker request per message even when dropped.
 
