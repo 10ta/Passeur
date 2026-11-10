@@ -52,7 +52,14 @@ export async function handleGuestMessage(app, msg) {
 /** Relays a guest message (or a pending message id after captcha) into the topic. */
 export async function relayToTopic(app, msg, from, user) {
   const { cfg, db } = app;
-  let topicId = await ensureTopic(app, from, user);
+  let topicId;
+  try {
+    topicId = await ensureTopic(app, from, user);
+  } catch (err) {
+    // e.g. wrong GROUP_ID or the bot lost "Manage Topics": tell the guest, then report.
+    await guestFailure(app, from.id, err, false);
+    return;
+  }
   let replyTo;
   if (msg.reply_to_message) {
     replyTo = (await db.mapByGuestMsg(from.id, msg.reply_to_message.message_id))?.topic_msg_id;

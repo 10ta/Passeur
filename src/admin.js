@@ -37,8 +37,15 @@ export async function handleGroupMessage(app, msg) {
   const isAdmin = Boolean(msg.from && cfg.adminIds.has(msg.from.id));
 
   if (msg.chat.id !== cfg.groupId) {
-    // Setup helper: lets an admin read the group ID before GROUP_ID is configured.
-    if (cmd?.name === 'id' && isAdmin) await replyIn(app, msg, `Chat ID: <code>${msg.chat.id}</code>`);
+    // Setup helper. Answers anyone (ADMIN_IDS may be wrong too); a group's own ID is no secret to its members.
+    if (cmd?.name === 'id' || cmd?.name === 'check') {
+      await replyIn(app, msg, [
+        `Chat ID: <code>${msg.chat.id}</code>`,
+        cfg.groupId
+          ? '⚠️ 这不是 GROUP_ID 配置的群。若这就是管理群，把上面的 ID 填进 .env 的 GROUP_ID，再运行 ./update.sh。'
+          : 'GROUP_ID 还没设置：把上面的 ID 填进 .env，再运行 ./update.sh。',
+      ].join('\n'));
+    }
     return;
   }
   if (msg.sender_chat?.id === msg.chat.id) {

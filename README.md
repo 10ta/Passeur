@@ -29,6 +29,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 - [How It Works](#-how-it-works)
 - [Project Structure](#-project-structure)
 - [Development](#-development)
+- [FAQ & Troubleshooting](#-faq--troubleshooting)
 - [Security](#-security)
 - [Limitations & Roadmap](#-limitations--roadmap)
 - [Documentation](#-documentation)
@@ -92,7 +93,7 @@ Requires Node.js 22.13+, a Cloudflare account and a bot token from [@BotFather](
 
 Every step is idempotent, so the same command installs and updates:
 
-1. Creates `.env` from `.env.example` (mode 600) and prompts for empty values.
+1. Creates `.env` from `.env.example` (mode 600), prompts for empty values, and checks that `GROUP_ID` is a group the bot can see.
 2. Creates the D1 database `passeur` in Western Europe (close to Telegram's API servers) if it doesn't exist, and writes `wrangler.toml` from `wrangler.example.toml`.
 3. Applies `migrations/`, deploys the Worker, and pushes the settings as Worker secrets.
 4. Points the Telegram webhook at `https://<worker>/webhook` with a secret header, and sets the command menus.
@@ -126,11 +127,11 @@ Use Telegram's **Reply** in the topic; the guest sees it as a reply to their own
 | `/broadcast` | General, as a reply | Send the replied message to every verified, unblocked guest |
 | `/cancel` | General | Stop a running broadcast |
 | `/blocked`, `/stats` | anywhere in the group | Blocked list; user counts |
-| `/check` | anywhere in the group | Verify Topics, bot permissions and admin accounts |
+| `/check` | anywhere in the group | Verify Topics, bot permissions and admin accounts; in a group that isn't `GROUP_ID`, says so |
 | `/id` | group or DM | Show the chat ID (works before `GROUP_ID` is set) |
 | `/help` | anywhere in the group | This list |
 
-Only accounts in `ADMIN_IDS` can use them; other group members are ignored.
+Only accounts in `ADMIN_IDS` can use them; other group members are ignored. The exception is `/id` and `/check` in a group that isn't `GROUP_ID`, which answer anyone so a wrong setup can be found.
 
 ## 🔧 Configuration
 
@@ -245,6 +246,12 @@ npm run build
 ```
 
 `npm test` runs the suite against a real SQLite copy of the schema and a fake Bot API; it needs no network. `npm run build` bundles the Worker without deploying (`Total Upload: … KiB`). Telegram cannot reach `wrangler dev` on localhost, so end-to-end checks happen on the deployed Worker. Agent conventions are in [AGENTS.md](AGENTS.md).
+
+## ❓ FAQ & Troubleshooting
+
+**Guests get “Delivery failed” or no reply, `/check` in the group stays silent, `update.sh` warned `chat not found`**
+→ `GROUP_ID` is not the admin group's ID. The usual culprit is the `-123…` in Telegram Web's address bar; the Bot API writes the same group as `-100123…`.
+→ Send `/id` in the admin group (anyone can, even before setup is right), put the value in `.env`, run `./update.sh`. `update.sh` also detects a missing `-100` and offers the corrected value.
 
 ## 🔒 Security
 

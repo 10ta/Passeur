@@ -29,6 +29,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 - [工作原理](#-工作原理)
 - [项目结构](#-项目结构)
 - [开发](#-开发)
+- [常见问题与排错](#-常见问题与排错)
 - [安全](#-安全)
 - [局限与路线](#-局限与路线)
 - [文档地图](#-文档地图)
@@ -92,7 +93,7 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 
 每一步都是幂等的，所以安装和更新是同一条命令：
 
-1. 从 `.env.example` 创建 `.env`（权限 600），并询问为空的配置项。
+1. 从 `.env.example` 创建 `.env`（权限 600），询问为空的配置项，并检查 `GROUP_ID` 是 bot 能访问到的群。
 2. D1 数据库 `passeur` 不存在时，在西欧创建（靠近 Telegram 的 API 服务器），并由 `wrangler.example.toml` 生成 `wrangler.toml`。
 3. 应用 `migrations/`，部署 Worker，把配置作为 Worker secrets 推上去。
 4. 把 Telegram webhook 指向 `https://<worker>/webhook` 并带上密钥头，同时设置命令菜单。
@@ -126,11 +127,11 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 | `/broadcast` | General，回复某条消息 | 把被回复的那条消息发给所有已验证、未拉黑的访客 |
 | `/cancel` | General | 停止进行中的广播 |
 | `/blocked`、`/stats` | 群内任意位置 | 拉黑列表；用户统计 |
-| `/check` | 群内任意位置 | 检查话题开关、bot 权限和管理员账号 |
+| `/check` | 群内任意位置 | 检查话题开关、bot 权限和管理员账号；在不是 `GROUP_ID` 的群里会提示不一致 |
 | `/id` | 群或私聊 | 显示聊天 ID（`GROUP_ID` 未设置时也可用） |
 | `/help` | 群内任意位置 | 显示这张表 |
 
-只有 `ADMIN_IDS` 里的账号能用；其他群成员的消息一律忽略。
+只有 `ADMIN_IDS` 里的账号能用；其他群成员的消息一律忽略。例外：在不是 `GROUP_ID` 的群里，`/id` 和 `/check` 对任何人都会回应，方便排查配置错误。
 
 ## 🔧 配置
 
@@ -245,6 +246,12 @@ npm run build
 ```
 
 `npm test` 用一份真实 SQLite 建的表结构和一个假的 Bot API 跑测试，不需要联网。`npm run build` 只打包不部署（输出 `Total Upload: … KiB`）。Telegram 访问不到本机的 `wrangler dev`，所以端到端验证要在部署后的 Worker 上做。面向编码代理的约定见 [AGENTS.md](AGENTS.md)。
+
+## ❓ 常见问题与排错
+
+**访客收到“发送失败”或没有任何回应，群里 `/check` 没反应，`update.sh` 提示 `chat not found`**
+→ `GROUP_ID` 不是管理群的 ID。最常见的是填了 Telegram Web 地址栏里的 `-123…`，Bot API 里同一个群写作 `-100123…`。
+→ 在管理群里发 `/id`（任何人都能用，配置错误时也能用），把结果填进 `.env`，运行 `./update.sh`。`update.sh` 也会发现缺了 `-100` 并提示正确的值。
 
 ## 🔒 安全
 

@@ -75,6 +75,37 @@ fi
 ask ADMIN_IDS "管理员 ID（逗号分隔；不知道就先回车，部署后私聊 bot 发 /id）" optional
 ask GROUP_ID "管理群 ID（-100 开头；还没有就先回车）" optional
 
+# A wrong GROUP_ID fails silently at runtime (topics can't be created), so check it here.
+# Common mistakes: the "-123…" shown in Telegram Web's address bar (Bot API wants
+# "-100123…"), or the old ID of a group from before it became a supergroup.
+check_group() {
+  local gid res alt title answer
+  gid=$(envget GROUP_ID)
+  [ -n "$gid" ] || return 0
+  [[ $gid =~ ^-?[0-9]+$ ]] || die "GROUP_ID 不是数字：$gid"
+  res=$(tg getChat "{\"chat_id\":$gid}" || true)
+  if printf '%s' "$res" | grep -q '"ok":true'; then
+    printf '%s' "$res" | grep -q '"is_forum":true' || warn "群 $gid 还没开启话题（Topics），bot 无法建话题"
+    return 0
+  fi
+  alt=$(printf '%s' "$res" | node scripts/env.mjs field parameters.migrate_to_chat_id 2>/dev/null || true)
+  if [ -z "$alt" ] && [[ $gid != -100* ]]; then alt="-100${gid#-}"; fi
+  if [ -n "$alt" ]; then
+    res=$(tg getChat "{\"chat_id\":$alt}" || true)
+    if printf '%s' "$res" | grep -q '"ok":true'; then
+      title=$(printf '%s' "$res" | node scripts/env.mjs field result.title)
+      if [ -t 0 ]; then
+        read -rp "GROUP_ID=$gid 找不到；$alt 是群「$title」。改用它？[Y/n] " answer
+        if [ "$answer" != n ] && [ "$answer" != N ]; then envset GROUP_ID "$alt"; say "GROUP_ID 已改为 $alt"; return 0; fi
+      fi
+      die "GROUP_ID=$gid 找不到；应为 $alt（群「$title」）。改好 .env 后重新运行"
+    fi
+  fi
+  die "GROUP_ID=$gid 无效：$res
+   在管理群里发 /id 查看正确的 ID（bot 必须已在群里），填进 .env 后重新运行"
+}
+check_group
+
 # ---------------------------------------------------------------- D1 + wrangler.toml
 db_id=''
 if [ -f wrangler.toml ]; then

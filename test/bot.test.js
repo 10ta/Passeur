@@ -91,6 +91,32 @@ test('deleted topic is recreated and the message retried', async () => {
   assert.equal(s.row('SELECT topic_id FROM users WHERE user_id = 604').topic_id, 501);
 });
 
+test('wrong GROUP_ID: guest is told delivery failed instead of silence', async () => {
+  const s = setup();
+  s.tg.failNext('createForumTopic', 400, 'Bad Request: chat not found');
+  await assert.rejects(s.send(guest(609)));
+  const toGuest = s.tg.of('sendMessage').filter((c) => c.params.chat_id === 609);
+  assert.equal(toGuest.length, 1);
+  assert.match(toGuest[0].params.text, /发送失败/);
+  assert.equal(s.row('SELECT topic_id FROM users WHERE user_id = 609').topic_id, null, 'claim released');
+});
+
+test('/id and /check in a group that is not GROUP_ID answer anyone, with a hint', async () => {
+  const s = setup({ ADMIN_IDS: '' }); // even with wrong admin IDs
+  for (const c of ['/id', '/check']) {
+    const g = inGeneral(4242, cmd(c));
+    g.message.chat.id = -100555;
+    await s.send(g);
+  }
+  const texts = s.tg.of('sendMessage').map((c) => c.params.text);
+  assert.equal(texts.length, 2);
+  assert.ok(texts.every((t) => t.includes('-100555') && t.includes('GROUP_ID')), texts.join('\n'));
+  const other = inGeneral(4242, { text: 'hi' });
+  other.message.chat.id = -100555;
+  await s.send(other);
+  assert.equal(s.tg.calls.length, 2, 'plain messages in other groups stay ignored');
+});
+
 test('closed topic is reopened, not duplicated', async () => {
   const s = setup();
   await s.send(guest(608));

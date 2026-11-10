@@ -54,7 +54,7 @@ There is no linter; match the existing style.
 
 - Do not commit `.env`, `wrangler.toml` (holds the account's D1 ID) or `.wrangler/`.
 - Do not log Telegram request URLs: they contain the bot token.
-- Do not authorize by group membership; only `cfg.adminIds`. Messages with `sender_chat` equal to the group are anonymous admins and must be refused.
+- Do not authorize by group membership; only `cfg.adminIds` (sole exception: `/id` and `/check` in a group that is not `GROUP_ID`, which only reveal that group's own ID). Messages with `sender_chat` equal to the group are anonymous admins and must be refused.
 - Do not put the bot token in command-line arguments in shell scripts (`tg()` in `update.sh` passes it via `curl -K -`).
 - Do not add a second Cron Trigger: free accounts have 5 in total, shared by all their Workers.
 
@@ -80,6 +80,8 @@ There is no linter; match the existing style.
 
 - In forum topics every message has `reply_to_message` pointing at the topic root; treat `reply_to_message.message_id === message_thread_id` as "not a reply".
 - `wrangler … --json` output can be preceded by a `▲ [WARNING] …` banner that starts with `[`; parse it with `scripts/env.mjs` (`parseLooseJson`), not `JSON.parse`.
+- Bot API group IDs are `-100…`; Telegram Web shows the same group as `-…` without `100`. `check_group` in `update.sh` validates `GROUP_ID` with `getChat` and suggests the fix; keep it before deploy.
+- `ensureTopic` can fail (wrong `GROUP_ID`, lost Manage Topics): it must stay inside the guest's error handling so the guest is told, since the admin notice goes to the same unreachable group.
 - `node -e … "$value"` treats a negative number like `-100123` as a node option; pass values through files or `scripts/env.mjs`.
 - The fake D1 batch returns `results` only for statements starting with `SELECT`, like D1.
 - Copying a message drops the "Forwarded from" header; that is the intended privacy default.
