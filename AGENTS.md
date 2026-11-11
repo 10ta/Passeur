@@ -27,13 +27,14 @@ There is no linter; match the existing style. Deeper design notes and measured c
 - `src/admin.js` — the admin forum group: relay topic → guest, commands, `/check`, delivery error reports.
 - `src/relay.js` — `sendSingle`, `sendAlbumItem`, topic create/recover, `syncEdit`. Shared by both directions via a `route` object.
 - `src/lists.js` — list topics: `/newlist`, member panel (`lm:<topic>:<user>` callbacks, saved on each tap), `fanOut` to members.
+- `src/mirror.js` — mirrors of list messages in recipients' topics: `mirrorDelivered` after a fan-out, `fillPending` before relaying a guest message; `list_pending` holds what is not mirrored yet (cleared on fill, `/forget`, and after 7 days).
 - `src/settings.js` — `SETTINGS` registry, `getSetting(app, key, topicId?)`, `keepForwardSource`, `/settings` panel, driven from one General message: `st:h` global, `st:s:<page>` session list, `st:o:<topic>` session panel, `st:<g|topic>:<key>` cycle.
 - `src/status.js` — ❗ waiting icon: `markWaiting` after a guest message, `markAnswered` via the route's `onSent` hook; `users.waiting`; icon id cached in settings scope `i`.
 - `src/health.js` — `checkWebhook` in the 5-minute cron; alert state in settings scope `h`.
 - `src/forget.js` — `/forget` confirm flow (`fg:<topic>:r|t|x`), `db.forgetUser`.
 - `src/content.js` — `isRelayable(msg)`: whitelist of content fields; everything else is a service message and is dropped silently (guest DMs and the admin group).
 - `src/db.js` — the only place with SQL. `src/telegram.js` — Bot API client and `TgError` classifiers.
-- `migrations/` — D1 schema; add the next numbered file (`0006_*.sql`), never edit an applied migration.
+- `migrations/` — D1 schema; add the next numbered file (`0007_*.sql`), never edit an applied migration.
 - `scripts/env.mjs` — `.env` read/write and JSON bodies for `update.sh`.
 - `test/helpers.js` — fake D1 over `node:sqlite` (loads `migrations/`), fake Telegram with `failNext()`.
 - To change who may operate the bot, start in `src/admin.js` (`handleGroupMessage`) and `src/guest.js` (admin DM branch).
@@ -54,12 +55,13 @@ There is no linter; match the existing style. Deeper design notes and measured c
 - Topic creation is claimed by setting `users.topic_id = -user_id`; other requests poll. Keep `claimTopic` / `resetTopic` conditional updates.
 - Albums: `markAlbumSent` must happen before `takeAlbumItems`, and taking is a single D1 batch (one transaction). This is what makes each item go out exactly once.
 - Free plan: ≤ 50 external subrequests and 10 ms CPU per invocation. Broadcast `BATCH = 40` leaves room for the other calls; long waits go in `waitUntil` (≤ 30 s).
-- Topics are recipient lists. Guest topics (`users.topic_id`) are strictly 1:1 and keep reply threading, edit sync and inbound relay; list topics (`lists`, `list_members`) are outbound-only fan-out without `msg_map` rows. Never add members to a guest topic: the guest's replies would land elsewhere.
-- List budget: `MAX_MEMBERS = 45` × 1 call + 1 failure report ≤ 50 (a test asserts it). Raising it needs batching via the cron.
+- Topics are recipient lists. Guest topics (`users.topic_id`) are strictly 1:1 and keep reply threading, edit sync and inbound relay; list topics (`lists`, `list_members`) are outbound-only fan-out; the only `msg_map` rows they create pair a guest's copy with its mirror in that guest's topic (dir 1). Never add members to a guest topic: the guest's replies would land elsewhere.
+- List budget: `MAX_MEMBERS = 24` × (1 delivery + 1 mirror) + 1 failure report ≤ 50 (tests assert it, and that an oversized legacy list still delivers to everyone). Deliveries always come before mirrors.
 - `bufferAlbum(app, fromChat, msg, { group, single }, onError)` is the shared album buffer; `sendAlbumItem` (one route) and `fanOut` (many members) both use it.
 - Success is silent everywhere. Failures are reported in the topic (`reportDelivery` in `admin.js`, `deliverAll` in `lists.js`) unless the `receipts` setting is `off`. `users.receipt_msg_id` / `receipt_seen` (migration 0004) belong to the withdrawn 👌/👀 marks and are unused; leave them.
 - Telegram sends no update when a topic is deleted. List topics are retired explicitly (`st:x` → `st:X` → `db.deleteList`), which never deletes the Telegram topic. A `forum_topic_edited` with a name on a list topic updates `lists.name`.
 - Only messages with a content field are relayed (`isRelayable`). Service messages (auto-delete timer, pins, backgrounds, topic edits, future types) never reach `copyMessage` and never produce a guest-facing error. Uncopyable content (paid media, invoices, giveaways, games) does reach it and gets the normal "unsupported" reply. Keep it a whitelist; new content types go into `CONTENT_KEYS`.
+- A mirror is posted by the bot with `disable_notification` and a `📤 群发 · <list>` URL button; it is neither an answer nor a guest message for the status icon. A 429 while mirroring stops mirroring only (never reported as a delivery failure).
 - Internal notes: in any topic, text or caption starting with `//` is never sent (`isInternalNote`, checked before guest and list routing). Notes and failed deliveries do not count as an answer for the status icon.
 - Source: first `/start <payload>` only (`users.source`, payload `[A-Za-z0-9_-]{1,64}`); shown in topic name, card, `/info`.
 - `/forget` clears users, msg_map, list_members and the topic's settings in one batch; deleting the Telegram topic is a separate explicit choice.

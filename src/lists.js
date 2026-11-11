@@ -2,16 +2,19 @@
 // set of guests instead of one guest. Guest topics are the 1-person case and
 // keep their own path in admin.js (reply threading, edit sync, inbound).
 //
-// Budget: one fan-out copies to each member with 1 Bot API call, plus 1 for
-// the failure report, so MAX_MEMBERS = 45 stays within the Free
-// plan's 50 external subrequests per invocation (albums: copyMessages, same).
+// Budget (Free plan: 50 external subrequests per invocation): per member 1
+// call to deliver + 1 to mirror into their topic, plus 1 failure report, so
+// MAX_MEMBERS = 24. Deliveries come first; mirrors use what is left of
+// CALL_BUDGET and the rest is mirrored when the guest writes (mirror.js).
 
 import { TgError } from './telegram.js';
 import { esc } from './text.js';
 import { bufferAlbum } from './relay.js';
 import { keepForwardSource, getSetting } from './settings.js';
+import { mirrorDelivered } from './mirror.js';
 
-export const MAX_MEMBERS = 45;
+export const MAX_MEMBERS = 24;
+const CALL_BUDGET = 49; // 50 minus the failure report
 const RECENT = 30;
 
 const short = (s, n) => ([...s].length > n ? [...s].slice(0, n - 1).join('') + '…' : s);
@@ -112,18 +115,27 @@ async function deliverAll(app, msg, members, ids, forward) {
   const { cfg, tg } = app;
   const method = ids.length > 1 ? (forward ? 'forwardMessages' : 'copyMessages') : (forward ? 'forwardMessage' : 'copyMessage');
   const idParam = ids.length > 1 ? { message_ids: ids } : { message_id: ids[0] };
-  let sent = 0;
+  const delivered = [];
   const failed = [];
   let stoppedAt = null;
+  let calls = 0;
   for (const m of members) {
     try {
-      await tg.call(method, { chat_id: m.user_id, from_chat_id: cfg.groupId, ...idParam });
-      sent++;
+      calls++;
+      const res = await tg.call(method, { chat_id: m.user_id, from_chat_id: cfg.groupId, ...idParam });
+      const first = Array.isArray(res) ? res[0] : res;
+      delivered.push({ user_id: m.user_id, topic_id: m.topic_id, guest_msg_id: first?.message_id });
     } catch (err) {
       if (err instanceof TgError && err.code === 429) { stoppedAt = m; break; }
       failed.push(`${m.name}（${err instanceof TgError && err.recipientGone ? '已屏蔽 bot' : '发送失败'}）`);
     }
   }
+  const sent = delivered.length;
+  // Copy into each recipient's own topic so their history and replies sit together.
+  const list = await app.db.getList(msg.message_thread_id);
+  await mirrorDelivered(app, delivered.filter((d) => d.guest_msg_id), {
+    list_msg_id: ids[0], list_topic_id: msg.message_thread_id, is_album: ids.length > 1 ? 1 : 0, label: list?.name ?? '群发',
+  }, CALL_BUDGET - calls).catch((err) => console.error('mirroring failed', err.message));
   if (sent === members.length) return; // success is silent
   console.error(`fan-out: ${sent}/${members.length} delivered`);
   if ((await getSetting(app, 'receipts', msg.message_thread_id)) === 'off') return;

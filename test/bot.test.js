@@ -470,6 +470,9 @@ async function listSetup(s, guestIds, name = '客户') {
   assert.equal(topic.params.name, `📤 ${name}`);
   return s.row('SELECT topic_id FROM lists ORDER BY created_at DESC, topic_id DESC LIMIT 1').topic_id;
 }
+/** Fan-out copies to guests vs. mirrors posted into guest topics. */
+const deliveries = (s) => s.tg.of('copyMessage').filter((c) => c.params.chat_id !== GROUP);
+const mirrors = (s) => s.tg.calls.filter((c) => c.params.chat_id === GROUP && c.params.reply_markup?.inline_keyboard?.[0]?.[0]?.text?.startsWith('📤 群发'));
 const listCb = (s, topicId, userId, from = ADMIN1) => s.send({ callback_query: {
   id: 'q', from: { id: from }, data: `lm:${topicId}:${userId}`,
   message: { message_id: 8888, chat: { id: GROUP, type: 'supergroup' } } } });
@@ -478,7 +481,7 @@ test('/newlist creates a list topic with a panel inside; /list re-posts it', asy
   const s = setup();
   const t = await listSetup(s, [2101, 2102]);
   const panel = s.tg.of('sendMessage').find((c) => c.params.message_thread_id === t);
-  assert.match(panel.params.text, /名单「客户」：0\/45/);
+  assert.match(panel.params.text, /名单「客户」：0\/24/);
   assert.deepEqual(panel.params.reply_markup.inline_keyboard.flat().map((b) => b.callback_data).sort(),
     [`lm:${t}:2101`, `lm:${t}:2102`]);
   assert.match(s.tg.of('sendMessage').at(-1).params.text, /已创建名单话题/);
@@ -495,7 +498,7 @@ test('panel toggles membership in D1 and re-renders; non-admins are refused', as
   await listCb(s, t, 2201);
   assert.ok(s.row('SELECT 1 AS x FROM list_members WHERE topic_id = ? AND user_id = 2201', t));
   const edit = s.tg.of('editMessageText').at(-1).params;
-  assert.match(edit.text, /1\/45/);
+  assert.match(edit.text, /1\/24/);
   assert.equal(edit.reply_markup.inline_keyboard.flat()[0].text, '☑ Guest2201', 'members listed first');
   await listCb(s, t, 2201);
   assert.equal(s.rows('SELECT * FROM list_members').length, 0, 'second tap removes');
@@ -504,16 +507,16 @@ test('panel toggles membership in D1 and re-renders; non-admins are refused', as
   assert.equal(s.rows('SELECT * FROM list_members').length, 0);
 });
 
-test('list is capped at 45 members', async () => {
+test('list is capped at 24 members', async () => {
   const s = setup();
   const t = await listSetup(s, [2301]);
   const ins = s.d1.raw.prepare('INSERT INTO users (user_id, name, verified, topic_id, created_at) VALUES (?, ?, 1, ?, 0)');
   for (let i = 0; i < 46; i++) ins.run(3000 + i, `u${i}`, 9000 + i);
-  for (let i = 0; i < 45; i++) s.d1.raw.prepare('INSERT INTO list_members VALUES (?, ?)').run(t, 3000 + i);
+  for (let i = 0; i < 24; i++) s.d1.raw.prepare('INSERT INTO list_members VALUES (?, ?)').run(t, 3000 + i);
   await listCb(s, t, 3045);
   const a = s.tg.of('answerCallbackQuery').at(-1).params;
   assert.equal(a.show_alert, true);
-  assert.match(a.text, /最多 45/);
+  assert.match(a.text, /最多 24/);
 });
 
 test('a message in a list topic goes to every non-blocked member; success is silent', async () => {
@@ -525,7 +528,7 @@ test('a message in a list topic goes to every non-blocked member; success is sil
   const m = inTopic(t, ADMIN2, { text: 'news for everyone' });
   await s.send(m);
   await s.flush();
-  const copies = s.tg.of('copyMessage');
+  const copies = s.tg.of('copyMessage').filter((c) => c.params.chat_id !== GROUP);
   assert.deepEqual(copies.map((c) => c.params.chat_id).sort(), [2401, 2402]);
   assert.ok(copies.every((c) => c.params.from_chat_id === GROUP && c.params.message_id === m.message.message_id));
   assert.equal(s.tg.of('setMessageReaction').length, 0);
@@ -583,19 +586,37 @@ test('guest topics are unaffected and a list topic never receives guest messages
   assert.equal(s.tg.of('copyMessage').length, 1, 'guest topic still 1:1');
 });
 
-test('a full 45-member fan-out stays within 50 Bot API calls', async () => {
+test('a full 24-member fan-out (deliver + mirror each) stays within 50 Bot API calls', async () => {
   const s = setup();
   const t = await listSetup(s, [2801]);
   const ins = s.d1.raw.prepare('INSERT INTO users (user_id, name, verified, topic_id, created_at) VALUES (?, ?, 1, ?, 0)');
-  for (let i = 0; i < 45; i++) {
+  for (let i = 0; i < 24; i++) {
     ins.run(5000 + i, `m${i}`, 8000 + i);
     s.d1.raw.prepare('INSERT INTO list_members VALUES (?, ?)').run(t, 5000 + i);
   }
   s.tg.clear();
   await s.send(inTopic(t, ADMIN1));
   await s.flush();
-  assert.equal(s.tg.of('copyMessage').length, 45);
+  assert.equal(deliveries(s).length, 24);
+  assert.equal(mirrors(s).length, 24);
   assert.ok(s.tg.calls.length <= 50, `calls: ${s.tg.calls.length}`);
+  assert.equal(s.rows('SELECT * FROM list_pending').length, 0);
+});
+
+test('an oversized legacy list (45): everyone is delivered, mirrors use the remaining budget', async () => {
+  const s = setup();
+  const t = await listSetup(s, [2901]);
+  const ins = s.d1.raw.prepare('INSERT INTO users (user_id, name, verified, topic_id, created_at) VALUES (?, ?, 1, ?, 0)');
+  for (let i = 0; i < 45; i++) {
+    ins.run(5100 + i, `m${i}`, 8100 + i);
+    s.d1.raw.prepare('INSERT INTO list_members VALUES (?, ?)').run(t, 5100 + i);
+  }
+  s.tg.clear();
+  await s.send(inTopic(t, ADMIN1));
+  await s.flush();
+  assert.equal(deliveries(s).length, 45);
+  assert.ok(s.tg.calls.length <= 50, `calls: ${s.tg.calls.length}`);
+  assert.equal(mirrors(s).length + s.rows('SELECT * FROM list_pending').length, 45, 'the rest waits for a reply');
 });
 
 // ---------------------------------------------------------------- /settings
@@ -1112,4 +1133,107 @@ test('service messages in the admin group are never relayed', async () => {
   await s.send(inTopic(500, ADMIN1, { text: undefined, some_future_service_message: {} }));
   await s.flush();
   assert.equal(s.tg.calls.length, 0);
+});
+
+// ---------------------------------------------------------------- list mirrors
+
+test('a list message is mirrored silently into each member topic, labelled and linked', async () => {
+  const s = setup();
+  const t = await listSetup(s, [8101, 8102]); // guest topics 500, 501
+  for (const id of [8101, 8102]) await listCb(s, t, id);
+  s.tg.clear();
+  const m = inTopic(t, ADMIN1, { text: 'sale starts friday' });
+  await s.send(m);
+  await s.flush();
+  const mir = mirrors(s);
+  assert.deepEqual(mir.map((c) => c.params.message_thread_id).sort(), [500, 501]);
+  const p = mir[0].params;
+  assert.equal(p.message_id, m.message.message_id);
+  assert.equal(p.disable_notification, true);
+  assert.deepEqual(p.reply_markup.inline_keyboard[0][0], { text: '📤 群发 · 客户', url: `https://t.me/c/1234/${t}/${m.message.message_id}` });
+  assert.equal(s.tg.of('editForumTopic').length, 0, 'a mirror neither sets nor clears the waiting icon');
+});
+
+test('a guest reply to a list message threads under its mirror; an admin reply to the mirror reaches the guest copy', async () => {
+  const s = setup();
+  const t = await listSetup(s, [8201]);
+  await listCb(s, t, 8201);
+  s.tg.clear();
+  await s.send(inTopic(t, ADMIN1));
+  await s.flush();
+  const map = s.row('SELECT * FROM msg_map WHERE guest_id = 8201 AND dir = 1');
+  assert.ok(map, 'guest copy <-> mirror recorded');
+  s.tg.clear();
+  await s.send(guest(8201, { reply_to_message: { message_id: map.guest_msg_id } }));
+  assert.equal(deliveriesToTopic(s)[0].params.reply_parameters.message_id, map.topic_msg_id);
+  s.tg.clear();
+  await s.send(inTopic(500, ADMIN1, { reply_to_message: { message_id: map.topic_msg_id } }));
+  assert.equal(s.tg.of('copyMessage')[0].params.reply_parameters.message_id, map.guest_msg_id);
+});
+const deliveriesToTopic = (s) => s.tg.of('copyMessage').filter((c) => c.params.chat_id === GROUP && !c.params.reply_markup);
+
+test('mirrors stopped by the group rate limit are filled in when that guest writes', async () => {
+  const s = setup();
+  const t = await listSetup(s, [8301, 8302]);
+  for (const id of [8301, 8302]) await listCb(s, t, id);
+  s.tg.clear();
+  s.tg.failNext('copyMessage', 429, 'Too Many Requests', (p) => p.chat_id === GROUP, { retry_after: 30 });
+  await s.send(inTopic(t, ADMIN1));
+  await s.flush();
+  assert.equal(deliveries(s).length, 2, 'guests still got it');
+  assert.equal(mirrors(s).length, 1, 'the failed attempt');
+  assert.equal(s.rows('SELECT * FROM list_pending').length, 2);
+  assert.equal(s.tg.of('sendMessage').length, 0, 'not reported as a delivery failure');
+
+  s.tg.clear();
+  const pend = s.row('SELECT * FROM list_pending WHERE user_id = 8301');
+  await s.send(guest(8301, { reply_to_message: { message_id: pend.guest_msg_id } }));
+  const calls = s.tg.of('copyMessage').map((c) => (c.params.reply_markup ? 'mirror' : 'guest'));
+  assert.deepEqual(calls, ['mirror', 'guest'], 'context first, then their message');
+  const mirrorId = s.row('SELECT topic_msg_id FROM msg_map WHERE guest_id = 8301 AND dir = 1').topic_msg_id;
+  assert.equal(deliveriesToTopic(s)[0].params.reply_parameters.message_id, mirrorId);
+  assert.equal(s.rows('SELECT * FROM list_pending WHERE user_id = 8301').length, 0);
+  assert.equal(s.rows('SELECT * FROM list_pending WHERE user_id = 8302').length, 1, 'others untouched');
+});
+
+test('fill on reply: latest 3 within 48 h, plus an older one if it is the one replied to', async () => {
+  const s = setup();
+  await s.send(guest(8401));
+  const now = Math.floor(Date.now() / 1000);
+  const ins = s.d1.raw.prepare('INSERT INTO list_pending VALUES (8401, ?, 900, ?, 0, ?, ?)');
+  ins.run(11, 111, '旧', now - 5 * 86400); // too old
+  ins.run(12, 112, 'A', now - 4000);
+  ins.run(13, 113, 'B', now - 3000);
+  ins.run(14, 114, 'C', now - 2000);
+  ins.run(15, 115, 'D', now - 1000);
+  s.tg.clear();
+  await s.send(guest(8401));
+  assert.deepEqual(mirrors(s).map((c) => c.params.message_id), [13, 14, 15]);
+  assert.equal(s.rows('SELECT * FROM list_pending').length, 0, 'older ones are dropped, not replayed later');
+
+  ins.run(21, 121, '旧', now - 5 * 86400);
+  ins.run(22, 122, 'E', now - 100);
+  s.tg.clear();
+  await s.send(guest(8401, { reply_to_message: { message_id: 121 } }));
+  assert.deepEqual(mirrors(s).map((c) => c.params.message_id), [21, 22]);
+});
+
+test('an album is mirrored as one labelled line; /forget clears pending mirrors', async () => {
+  const s = setup();
+  const t = await listSetup(s, [8501]);
+  await listCb(s, t, 8501);
+  s.tg.clear();
+  const ids = [nextMsgId(), nextMsgId()];
+  await Promise.all(ids.map((id) => s.send(inTopic(t, ADMIN1, { message_id: id, media_group_id: 'M1', text: undefined, photo: [{}] }))));
+  await s.flush();
+  const mir = mirrors(s);
+  assert.equal(mir.length, 1);
+  assert.equal(mir[0].method, 'sendMessage');
+  assert.equal(mir[0].params.text, '📤 群发相册 · 客户');
+  assert.equal(mir[0].params.message_thread_id, 500);
+
+  s.d1.raw.exec("INSERT INTO list_pending VALUES (8501, 1, 900, 2, 0, 'x', 0)");
+  await s.send({ callback_query: { id: 'q', from: { id: ADMIN1 }, data: 'fg:500:r',
+    message: { message_id: 4444, chat: { id: GROUP, type: 'supergroup' } } } });
+  assert.equal(s.rows('SELECT * FROM list_pending').length, 0);
 });

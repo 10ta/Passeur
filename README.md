@@ -131,9 +131,10 @@ Share links like `https://t.me/<your_bot>?start=blog` (letters, digits, `_` and 
 
 A topic is a recipient list: a guest's own topic reaches that one guest, a **list topic** reaches everyone ticked on its list.
 
-1. `/newlist Clients` creates the topic `📤 Clients` with a panel inside. Tick guests (☐/☑); each tap is saved at once, up to 45 people. `/list` in that topic brings the panel back.
+1. `/newlist Clients` creates the topic `📤 Clients` with a panel inside. Tick guests (☐/☑); each tap is saved at once, up to 24 people. `/list` in that topic brings the panel back.
 2. Post or forward anything into `📤 Clients` — text, media, albums. It is copied to every member who isn't blocked.
 3. Nothing happens when everyone got it; otherwise the bot replies with who didn't and why.
+4. Each recipient's own topic gets a silent copy with a `📤 群发 · Clients` button that jumps to the original (an album becomes one labelled line). When a guest replies to the message, their reply shows under that copy. Copies held back by Telegram's rate limit appear when that guest next writes, just above their message.
 
 Guest topics always stay one-to-one, because a guest's replies come back to their own topic. Keep conversations between your admin accounts out of list topics: every message there is sent.
 
@@ -242,6 +243,7 @@ A guest's topic maps to that guest and a list topic to its members, both as rows
 │   ├── relay.js       # copy/forward, albums, topic creation and recovery
 │   ├── broadcast.js   # Batched broadcast
 │   ├── lists.js       # List topics: member panel, fan-out
+│   ├── mirror.js      # Copies of list messages in each recipient's topic
 │   ├── settings.js    # Settings registry, resolution, /settings panel
 │   ├── status.js      # ❗ waiting icon on guest topics
 │   ├── health.js      # Webhook health check (cron)
@@ -290,7 +292,7 @@ npm run build
 - A guest's message sent before passing the captcha is kept only if it was the first one (one album item at most).
 - Broadcast sends a single message; a replied-to album broadcasts its first item.
 - Only a leading `//` makes a note; anything else in a topic is sent. The health check runs every 5 minutes, so a short outage can go unreported.
-- List topics: at most 45 members (one Bot API call each within the free plan's 50 per invocation); edits are not synced; a guest's reply to a list message lands in their topic without the reply link.
+- List topics: at most 24 members (two Bot API calls each, deliver and mirror, within the free plan's 50 per invocation); edits are not synced; every send marks each recipient's topic unread; the reply link only shows when the guest uses Reply; with several unmirrored messages, only the latest 3 from the past 48 hours (plus the one replied to) are filled in.
 - Admin text starting with `/` is treated as a command, not sent.
 - A flood from one guest still costs one Worker request per message even when dropped.
 

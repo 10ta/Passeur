@@ -141,17 +141,39 @@ export function createDb(d1) {
     forgetUser: (userId, topicId) => d1.batch([
       d1.prepare('DELETE FROM msg_map WHERE guest_id = ?').bind(userId),
       d1.prepare('DELETE FROM list_members WHERE user_id = ?').bind(userId),
+      d1.prepare('DELETE FROM list_pending WHERE user_id = ?').bind(userId),
       d1.prepare('DELETE FROM settings WHERE scope = ?').bind(`t:${topicId}`),
       d1.prepare('DELETE FROM users WHERE user_id = ?').bind(userId),
     ]),
     deleteSetting: (scope, key) => run('DELETE FROM settings WHERE scope = ? AND key = ?', scope, key),
+
+    // ---- list mirrors (src/mirror.js) ----
+    addPending(rows) {
+      if (!rows.length) return Promise.resolve();
+      const t = now();
+      return d1.batch(rows.map((r) =>
+        d1.prepare('INSERT OR REPLACE INTO list_pending (user_id, list_msg_id, list_topic_id, guest_msg_id, is_album, label, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .bind(r.user_id, r.list_msg_id, r.list_topic_id, r.guest_msg_id, r.is_album, r.label, t)));
+    },
+    /** A guest's pending mirrors, oldest first (primary-key prefix; usually empty). */
+    pendingFor: (userId) => all('SELECT * FROM list_pending WHERE user_id = ? ORDER BY created_at, list_msg_id', userId),
+    /** Removes pending rows and records the mirrors' message pairs, in one transaction. */
+    settlePending(rows, maps) {
+      if (!rows.length) return Promise.resolve();
+      const t = now();
+      return d1.batch([
+        ...rows.map((r) => d1.prepare('DELETE FROM list_pending WHERE user_id = ? AND list_msg_id = ?').bind(r.user_id, r.list_msg_id)),
+        ...maps.map((m) => d1.prepare('INSERT OR REPLACE INTO msg_map (guest_id, guest_msg_id, topic_msg_id, dir, created_at) VALUES (?, ?, ?, ?, ?)')
+          .bind(m.guestId, m.guestMsgId, m.topicMsgId, m.dir, t)),
+      ]);
+    },
 
     // ---- list topics ----
     createList: (topicId, name) => run('INSERT INTO lists (topic_id, name, created_at) VALUES (?, ?, ?)', topicId, name, now()),
     getList: (topicId) => one('SELECT * FROM lists WHERE topic_id = ?', topicId),
     /** Members with their state, for sending and for the panel. */
     listMembers: (topicId) => all(
-      `SELECT u.user_id, u.name, u.blocked FROM list_members m JOIN users u ON u.user_id = m.user_id
+      `SELECT u.user_id, u.name, u.blocked, u.topic_id FROM list_members m JOIN users u ON u.user_id = m.user_id
        WHERE m.topic_id = ? ORDER BY u.name`, topicId),
     addMember: (topicId, userId) => run('INSERT OR IGNORE INTO list_members (topic_id, user_id) VALUES (?, ?)', topicId, userId),
     removeMember: (topicId, userId) => run('DELETE FROM list_members WHERE topic_id = ? AND user_id = ?', topicId, userId),
@@ -167,6 +189,7 @@ export function createDb(d1) {
       const albumCutoff = now() - 3600;
       await d1.batch([
         d1.prepare('DELETE FROM msg_map WHERE created_at < ?').bind(cutoff),
+        d1.prepare('DELETE FROM list_pending WHERE created_at < ?').bind(now() - 7 * 86400),
         // Also removes orphans whose album row was never written.
         d1.prepare('DELETE FROM album_items WHERE album_key NOT IN (SELECT album_key FROM albums WHERE created_at >= ?)').bind(albumCutoff),
         d1.prepare('DELETE FROM albums WHERE created_at < ?').bind(albumCutoff),

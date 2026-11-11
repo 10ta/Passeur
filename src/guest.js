@@ -8,6 +8,7 @@ import { parseCommand } from './commands.js';
 import { isRelayable } from './content.js';
 import { getSetting, rememberAdmin } from './settings.js';
 import { markWaiting } from './status.js';
+import { fillPending } from './mirror.js';
 
 const CAPTCHA_TTL = 600; // a challenge older than this is replaced on the next message
 const CAPTCHA_MAX_FAILS = 3;
@@ -78,6 +79,9 @@ export async function relayToTopic(app, msg, from, user) {
     await guestFailure(app, from.id, err, false);
     return;
   }
+  // List messages this guest received that their topic doesn't show yet go in first.
+  await fillPending(app, from.id, topicId, msg.reply_to_message?.message_id)
+    .catch((err) => console.error('fill pending failed', err.message));
   let replyTo;
   if (msg.reply_to_message) {
     replyTo = (await db.mapByGuestMsg(from.id, msg.reply_to_message.message_id))?.topic_msg_id;

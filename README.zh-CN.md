@@ -131,9 +131,10 @@ Alice: hi, is the camera still   ──▶   🤖 Alice: hi, is the camera still
 
 话题就是收件人名单：访客自己的话题只发给他一个人，**名单话题**发给名单上勾选的每个人。
 
-1. `/newlist 客户` 会新建话题 `📤 客户`，并在里面贴出面板。勾选访客（☐/☑），每点一下立即保存，最多 45 人。在该话题里发 `/list` 可以重新调出面板。
+1. `/newlist 客户` 会新建话题 `📤 客户`，并在里面贴出面板。勾选访客（☐/☑），每点一下立即保存，最多 24 人。在该话题里发 `/list` 可以重新调出面板。
 2. 往 `📤 客户` 里发或转发任何内容（文字、媒体、相册），都会复制给名单上没被拉黑的每个人。
 3. 全部送达时没有任何提示；否则 bot 会回复一条，列出谁没收到以及原因。
+4. 每个收件人自己的话题里会静音抄一份，带 `📤 群发 · 客户` 按钮，点了跳回原消息（相册只抄成一行带标签的说明）。访客回复这条消息时，他的回复会显示在这份抄送下面。被 Telegram 限流没抄成的，会在那位访客下次发消息时补上，排在他的消息前面。
 
 访客话题始终是一对一的，因为访客的回复总是回到他自己的话题。两个管理员号之间的商量不要放在名单话题里：那里的每条消息都会发出去。
 
@@ -242,6 +243,7 @@ npx wrangler tail passeur
 │   ├── relay.js       # copy/forward, albums, topic creation and recovery
 │   ├── broadcast.js   # Batched broadcast
 │   ├── lists.js       # List topics: member panel, fan-out
+│   ├── mirror.js      # Copies of list messages in each recipient's topic
 │   ├── settings.js    # Settings registry, resolution, /settings panel
 │   ├── status.js      # ❗ waiting icon on guest topics
 │   ├── health.js      # Webhook health check (cron)
@@ -290,7 +292,7 @@ npm run build
 - 访客在通过验证前发的消息只保留第一条（相册最多保留其中一项）。
 - 广播只发一条消息；回复的是相册时只广播第一项。
 - 只有开头是 `//` 的才算备注；话题里的其他内容都会发出去。健康检查每 5 分钟一次，很短的故障可能不会报警。
-- 名单话题：每个名单最多 45 人（每人占 1 次 Bot API 调用，免费版每次调用上限 50）；不做编辑同步；访客回复名单消息时，回复会进他的话题，但不显示“回复了哪条”。
+- 名单话题：每个名单最多 24 人（每人占 2 次 Bot API 调用：发送和抄送，免费版每次调用上限 50）；不做编辑同步；每次群发都会让每个收件人的话题变成未读；只有访客用了“回复”才显示回复了哪条；有多条没抄成的消息时，只补最近 48 小时内的最新 3 条（外加被回复的那条）。
 - 管理员以 `/` 开头的文字会被当作命令，不会发出。
 - 单个访客刷屏时，即使消息被丢弃，每条仍会消耗一次 Worker 请求。
 
