@@ -3,6 +3,7 @@
 import { DIR_OUT } from './db.js';
 import { TgError } from './telegram.js';
 import { parseCommand } from './commands.js';
+import { isRelayable } from './content.js';
 import { sendSingle, sendAlbumItem, syncEdit } from './relay.js';
 import { esc, userCard, HELP, displayName } from './text.js';
 import { runBroadcastBatch } from './broadcast.js';
@@ -11,15 +12,6 @@ import { showSettings, keepForwardSource, rememberAdmin, getSetting } from './se
 import { markAnswered } from './status.js';
 import { startForget } from './forget.js';
 
-const SERVICE_KEYS = [
-  'new_chat_members', 'left_chat_member', 'new_chat_title', 'new_chat_photo', 'delete_chat_photo',
-  'pinned_message', 'forum_topic_created', 'forum_topic_edited', 'forum_topic_closed',
-  'forum_topic_reopened', 'general_forum_topic_hidden', 'general_forum_topic_unhidden',
-  'video_chat_started', 'video_chat_ended', 'video_chat_scheduled', 'video_chat_participants_invited',
-  'message_auto_delete_timer_changed', 'migrate_to_chat_id', 'migrate_from_chat_id',
-  'boost_added', 'chat_background_set', 'write_access_allowed',
-];
-const isService = (msg) => SERVICE_KEYS.some((k) => k in msg);
 /** Admin-only notes inside a topic: text or caption starting with `//`. */
 export const isInternalNote = (msg) => /^\s*\/\//.test(msg.text ?? msg.caption ?? '');
 
@@ -64,7 +56,7 @@ export async function handleGroupMessage(app, msg) {
     await db.renameList(msg.message_thread_id, msg.forum_topic_edited.name.replace(/^📤\s*/u, '') || msg.forum_topic_edited.name);
     return;
   }
-  if (!isAdmin || msg.from.is_bot || isService(msg)) return;
+  if (!isAdmin || msg.from.is_bot || !isRelayable(msg)) return;
   await rememberAdmin(app, msg.from); // for hiding privacy-protected forwards from admins
 
   const threadId = msg.is_topic_message ? msg.message_thread_id : null;

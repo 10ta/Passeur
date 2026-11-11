@@ -31,6 +31,7 @@ There is no linter; match the existing style. Deeper design notes and measured c
 - `src/status.js` — ❗ waiting icon: `markWaiting` after a guest message, `markAnswered` via the route's `onSent` hook; `users.waiting`; icon id cached in settings scope `i`.
 - `src/health.js` — `checkWebhook` in the 5-minute cron; alert state in settings scope `h`.
 - `src/forget.js` — `/forget` confirm flow (`fg:<topic>:r|t|x`), `db.forgetUser`.
+- `src/content.js` — `isRelayable(msg)`: whitelist of content fields; everything else is a service message and is dropped silently (guest DMs and the admin group).
 - `src/db.js` — the only place with SQL. `src/telegram.js` — Bot API client and `TgError` classifiers.
 - `migrations/` — D1 schema; add the next numbered file (`0006_*.sql`), never edit an applied migration.
 - `scripts/env.mjs` — `.env` read/write and JSON bodies for `update.sh`.
@@ -58,6 +59,7 @@ There is no linter; match the existing style. Deeper design notes and measured c
 - `bufferAlbum(app, fromChat, msg, { group, single }, onError)` is the shared album buffer; `sendAlbumItem` (one route) and `fanOut` (many members) both use it.
 - Success is silent everywhere. Failures are reported in the topic (`reportDelivery` in `admin.js`, `deliverAll` in `lists.js`) unless the `receipts` setting is `off`. `users.receipt_msg_id` / `receipt_seen` (migration 0004) belong to the withdrawn 👌/👀 marks and are unused; leave them.
 - Telegram sends no update when a topic is deleted. List topics are retired explicitly (`st:x` → `st:X` → `db.deleteList`), which never deletes the Telegram topic. A `forum_topic_edited` with a name on a list topic updates `lists.name`.
+- Only messages with a content field are relayed (`isRelayable`). Service messages (auto-delete timer, pins, backgrounds, topic edits, future types) never reach `copyMessage` and never produce a guest-facing error. Uncopyable content (paid media, invoices, giveaways, games) does reach it and gets the normal "unsupported" reply. Keep it a whitelist; new content types go into `CONTENT_KEYS`.
 - Internal notes: in any topic, text or caption starting with `//` is never sent (`isInternalNote`, checked before guest and list routing). Notes and failed deliveries do not count as an answer for the status icon.
 - Source: first `/start <payload>` only (`users.source`, payload `[A-Za-z0-9_-]{1,64}`); shown in topic name, card, `/info`.
 - `/forget` clears users, msg_map, list_members and the topic's settings in one batch; deleting the Telegram topic is a separate explicit choice.
@@ -99,6 +101,7 @@ There is no linter; match the existing style. Deeper design notes and measured c
 - Bot API group IDs are `-100…`; Telegram Web shows the same group as `-…` without `100`. `check_group` in `update.sh` validates `GROUP_ID` with `getChat` and suggests the fix; keep it before deploy.
 - `ensureTopic` can fail (wrong `GROUP_ID`, lost Manage Topics): it must stay inside the guest's error handling so the guest is told, since the admin notice goes to the same unreachable group.
 - `node -e … "$value"` treats a negative number like `-100123` as a node option; pass values through files or `scripts/env.mjs`.
+- Tests: Telegram JSON never contains undefined keys, so `isRelayable` checks values, not `in`; test album items must carry `photo`/`video` like real ones.
 - The fake D1 batch returns `results` only for statements starting with `SELECT`, like D1.
 - Forwarding keeps "Forwarded from" (default `forward_source = all`); `keepForwardSource` must keep copying messages whose origin is any admin account or the admin group, or the admins are revealed.
 - Admins with forward privacy appear as `hidden_user` (name only). `rememberAdmin` stores each admin's display name (settings scope `a`, written only on change) from group messages, DMs to the bot and `/check`; `isAdminName` matches NFC-normalized names against them and the sender, and looks up still-unknown admins with `getChatMember`.

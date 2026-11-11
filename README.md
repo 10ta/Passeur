@@ -111,7 +111,7 @@ Add a route or custom domain to the Worker in the Cloudflare dashboard, set `WOR
 
 Open the guest's topic and write. Everything that is not a `/command` goes to the guest: text, media, stickers, voice, albums. Both admin accounts can reply in the same topic.
 
-Delivery is silent when it works. If a message can't be delivered (the guest blocked the bot, Telegram rate limit, protected content…), the bot replies under it in the topic with the reason. Set **送达回执** to 不提醒 in `/settings` to silence even that.
+Delivery is silent when it works. If a message can't be delivered (the guest blocked the bot, Telegram rate limit, protected content…), the bot replies under it in the topic with the reason. Set **送达回执** to 不提醒 in `/settings` to silence even that. Telegram's own service messages (a guest changing the auto-delete timer, pinning a message, a new chat background…) carry nothing to deliver and are ignored on both sides.
 
 Start a message with `//` to keep it inside the topic: a note between your admin accounts that the guest never sees (works in list topics too). A topic whose guest is waiting for an answer shows a ❗ icon in the sidebar; it goes back to normal once a reply is delivered.
 

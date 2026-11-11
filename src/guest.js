@@ -5,6 +5,7 @@ import { TgError } from './telegram.js';
 import { displayName, topicName, parseSource, T } from './text.js';
 import { ensureTopic, recreateTopic, sendSingle, sendAlbumItem, syncEdit } from './relay.js';
 import { parseCommand } from './commands.js';
+import { isRelayable } from './content.js';
 import { getSetting, rememberAdmin } from './settings.js';
 import { markWaiting } from './status.js';
 
@@ -20,6 +21,7 @@ export async function handleGuestMessage(app, msg) {
   const { cfg, db } = app;
   const from = msg.from;
   if (!from || from.is_bot) return;
+  if (!isRelayable(msg)) return; // service messages (auto-delete timer, pins…): nothing to relay, nothing to tell
   const cmd = parseCommand(msg);
 
   if (cmd?.name === 'id') return reply(app, msg.chat.id, `Your ID: ${from.id}`);

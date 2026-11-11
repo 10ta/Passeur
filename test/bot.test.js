@@ -382,14 +382,14 @@ test('admin album from topic goes to guest as a group; failure is reported in to
   await s.send(guest(1102));
   s.tg.clear();
   const ids = [nextMsgId(), nextMsgId()];
-  for (const id of ids) await s.send(inTopic(500, ADMIN1, { message_id: id, media_group_id: 'A1', text: undefined }));
+  for (const id of ids) await s.send(inTopic(500, ADMIN1, { message_id: id, media_group_id: 'A1', text: undefined, photo: [{}] }));
   await s.flush();
   assert.deepEqual(s.tg.of('copyMessages')[0].params.message_ids, ids);
   assert.equal(s.tg.of('copyMessages')[0].params.chat_id, 1102);
 
   s.tg.clear();
   s.tg.failNext('copyMessages', 403, 'Forbidden: bot was blocked by the user');
-  for (const id of [nextMsgId(), nextMsgId()]) await s.send(inTopic(500, ADMIN1, { message_id: id, media_group_id: 'A2', text: undefined }));
+  for (const id of [nextMsgId(), nextMsgId()]) await s.send(inTopic(500, ADMIN1, { message_id: id, media_group_id: 'A2', text: undefined, photo: [{}] }));
   await s.flush();
   assert.match(s.tg.of('sendMessage')[0].params.text, /屏蔽/);
 });
@@ -563,7 +563,7 @@ test('an album in a list topic goes to each member as one group', async () => {
   for (const id of [2601, 2602]) await listCb(s, t, id);
   s.tg.clear();
   const ids = [nextMsgId(), nextMsgId(), nextMsgId()];
-  await Promise.all(ids.map((id) => s.send(inTopic(t, ADMIN1, { message_id: id, media_group_id: 'L1', text: undefined }))));
+  await Promise.all(ids.map((id) => s.send(inTopic(t, ADMIN1, { message_id: id, media_group_id: 'L1', text: undefined, photo: [{}] }))));
   await s.flush();
   const groups = s.tg.of('copyMessages');
   assert.deepEqual(groups.map((c) => c.params.chat_id).sort(), [2601, 2602]);
@@ -970,7 +970,7 @@ test('status icon: album replies clear it; the setting can switch it off', async
   const s = setup();
   await s.send(guest(6301));
   s.tg.clear();
-  for (const id of [nextMsgId(), nextMsgId()]) await s.send(inTopic(500, ADMIN1, { message_id: id, media_group_id: 'S1', text: undefined }));
+  for (const id of [nextMsgId(), nextMsgId()]) await s.send(inTopic(500, ADMIN1, { message_id: id, media_group_id: 'S1', text: undefined, photo: [{}] }));
   await s.flush();
   assert.deepEqual(icons(s), [[500, '']]);
   const s2 = setup({ TOPIC_STATUS: '0' });
@@ -1068,4 +1068,48 @@ test('webhook health: one alert while broken, one note when recovered', async ()
   await checkWebhook(app());
   assert.equal(s.tg.of('sendMessage').filter((c) => /已恢复/.test(c.params.text)).length, 1);
   assert.ok(cron);
+});
+
+// ---------------------------------------------------------------- service messages
+
+test('guest service messages (auto-delete timer, pin, unknown types) are ignored silently', async () => {
+  const s = setup({ VERIFY: '1' });
+  const svc = [
+    { message_auto_delete_timer_changed: { message_auto_delete_time: 604800 } },
+    { pinned_message: { message_id: 1, date: 0, chat: { id: 7101, type: 'private' }, text: 'x' } },
+    { chat_background_set: { type: {} } },
+    { some_future_service_message: {} },
+  ];
+  for (const extra of svc) await s.send(guest(7101, { text: undefined, ...extra }));
+  assert.equal(s.tg.calls.length, 0, 'no captcha, no "cannot be delivered"');
+  assert.equal(s.row('SELECT * FROM users WHERE user_id = 7101'), undefined, 'not even registered');
+
+  // A verified guest with a topic: same, and the topic gets nothing either.
+  const s2 = setup();
+  await s2.send(guest(7102));
+  s2.tg.clear();
+  await s2.send(guest(7102, { text: undefined, message_auto_delete_timer_changed: { message_auto_delete_time: 1209600 } }));
+  assert.equal(s2.tg.calls.length, 0);
+});
+
+test('real but uncopyable content still tells the guest', async () => {
+  const s = setup();
+  await s.send(guest(7201));
+  s.tg.clear();
+  s.tg.failNext('copyMessage', 400, "Bad Request: message can't be copied");
+  await s.send(guest(7201, { text: undefined, paid_media: { star_count: 5, paid_media: [] } }));
+  assert.match(s.tg.of('sendMessage')[0].params.text, /无法转达/);
+});
+
+test('service messages in the admin group are never relayed', async () => {
+  const s = setup();
+  await s.send(guest(7301));
+  const t = await listSetup(s, [7302]);
+  await listCb(s, t, 7302);
+  s.tg.clear();
+  await s.send(inTopic(500, ADMIN1, { text: undefined, message_auto_delete_timer_changed: { message_auto_delete_time: 86400 } }));
+  await s.send(inTopic(t, ADMIN1, { text: undefined, pinned_message: { message_id: 1, date: 0, chat: { id: GROUP, type: 'supergroup' } } }));
+  await s.send(inTopic(500, ADMIN1, { text: undefined, some_future_service_message: {} }));
+  await s.flush();
+  assert.equal(s.tg.calls.length, 0);
 });
