@@ -24,7 +24,7 @@ flowchart LR
 - **Albums are buffered for 2.5 s in `waitUntil`** → waiting costs wall time, not CPU, so it fits the 10 ms CPU limit; each item is claimed exactly once.
 - **Broadcast runs 40 guests per batch** → the free plan allows 50 outbound requests per invocation; the 5-minute cron continues the job.
 - **Every per-message query uses a key or index** → rows read stay close to rows returned.
-- **List messages are mirrored into each recipient's topic** → a silent, labelled copy right after delivery; what the 50-call budget or Telegram's per-group rate limit (~20 messages a minute) leaves out is mirrored when that guest next writes, so a reply always has its context.
+- **List messages are mirrored into each recipient's topic** → a silent forward right after delivery, whose header names the admin who sent it (a bot copy would look like the guest); what the 50-call budget or Telegram's per-group rate limit (~20 messages a minute) leaves out is mirrored when that guest next writes, so a reply always has its context.
 - **The topic icon is the inbox** → `users.waiting` flips when the guest writes and when a reply is delivered; only those flips cost a Bot API call.
 - **The cron also watches the webhook** → `getWebhookInfo` every 5 minutes; one alert when deliveries fail or pile up, one note on recovery.
 

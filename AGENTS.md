@@ -34,7 +34,7 @@ There is no linter; match the existing style. Deeper design notes and measured c
 - `src/forget.js` — `/forget` confirm flow (`fg:<topic>:r|t|x`), `db.forgetUser`.
 - `src/content.js` — `isRelayable(msg)`: whitelist of content fields; everything else is a service message and is dropped silently (guest DMs and the admin group).
 - `src/db.js` — the only place with SQL. `src/telegram.js` — Bot API client and `TgError` classifiers.
-- `migrations/` — D1 schema; add the next numbered file (`0007_*.sql`), never edit an applied migration.
+- `migrations/` — D1 schema; add the next numbered file (`0008_*.sql`), never edit an applied migration.
 - `scripts/env.mjs` — `.env` read/write and JSON bodies for `update.sh`.
 - `test/helpers.js` — fake D1 over `node:sqlite` (loads `migrations/`), fake Telegram with `failNext()`.
 - To change who may operate the bot, start in `src/admin.js` (`handleGroupMessage`) and `src/guest.js` (admin DM branch).
@@ -61,7 +61,7 @@ There is no linter; match the existing style. Deeper design notes and measured c
 - Success is silent everywhere. Failures are reported in the topic (`reportDelivery` in `admin.js`, `deliverAll` in `lists.js`) unless the `receipts` setting is `off`. `users.receipt_msg_id` / `receipt_seen` (migration 0004) belong to the withdrawn 👌/👀 marks and are unused; leave them.
 - Telegram sends no update when a topic is deleted. List topics are retired explicitly (`st:x` → `st:X` → `db.deleteList`), which never deletes the Telegram topic. A `forum_topic_edited` with a name on a list topic updates `lists.name`.
 - Only messages with a content field are relayed (`isRelayable`). Service messages (auto-delete timer, pins, backgrounds, topic edits, future types) never reach `copyMessage` and never produce a guest-facing error. Uncopyable content (paid media, invoices, giveaways, games) does reach it and gets the normal "unsupported" reply. Keep it a whitelist; new content types go into `CONTENT_KEYS`.
-- A mirror is posted by the bot with `disable_notification` and a `📤 群发 · <list>` URL button; it is neither an answer nor a guest message for the status icon. A 429 while mirroring stops mirroring only (never reported as a delivery failure).
+- A mirror is a silent `forwardMessage` of the admin's list message (header "Forwarded from <admin>"), never a bare copy: guest messages in a topic are bot copies, so a copy would look like the guest. Forwarded originals (`list_pending.fwd`) get a `📤 群发 · <list>` label line first and cost 2 calls; albums are one label line. A mirror is neither an answer nor a guest message for the status icon. A 429 while mirroring stops mirroring only (never reported as a delivery failure).
 - Internal notes: in any topic, text or caption starting with `//` is never sent (`isInternalNote`, checked before guest and list routing). Notes and failed deliveries do not count as an answer for the status icon.
 - Source: first `/start <payload>` only (`users.source`, payload `[A-Za-z0-9_-]{1,64}`); shown in topic name, card, `/info`.
 - `/forget` clears users, msg_map, list_members and the topic's settings in one batch; deleting the Telegram topic is a separate explicit choice.

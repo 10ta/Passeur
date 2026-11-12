@@ -134,7 +134,7 @@ async function deliverAll(app, msg, members, ids, forward) {
   // Copy into each recipient's own topic so their history and replies sit together.
   const list = await app.db.getList(msg.message_thread_id);
   await mirrorDelivered(app, delivered.filter((d) => d.guest_msg_id), {
-    list_msg_id: ids[0], list_topic_id: msg.message_thread_id, is_album: ids.length > 1 ? 1 : 0, label: list?.name ?? '群发',
+    list_msg_id: ids[0], list_topic_id: msg.message_thread_id, is_album: ids.length > 1 ? 1 : 0, fwd: msg.forward_origin ? 1 : 0, label: list?.name ?? '群发',
   }, CALL_BUDGET - calls).catch((err) => console.error('mirroring failed', err.message));
   if (sent === members.length) return; // success is silent
   console.error(`fan-out: ${sent}/${members.length} delivered`);

@@ -134,7 +134,7 @@ A topic is a recipient list: a guest's own topic reaches that one guest, a **lis
 1. `/newlist Clients` creates the topic `📤 Clients` with a panel inside. Tick guests (☐/☑); each tap is saved at once, up to 24 people. `/list` in that topic brings the panel back.
 2. Post or forward anything into `📤 Clients` — text, media, albums. It is copied to every member who isn't blocked.
 3. Nothing happens when everyone got it; otherwise the bot replies with who didn't and why.
-4. Each recipient's own topic gets a silent copy with a `📤 群发 · Clients` button that jumps to the original (an album becomes one labelled line). When a guest replies to the message, their reply shows under that copy. Copies held back by Telegram's rate limit appear when that guest next writes, just above their message.
+4. Each recipient's own topic gets a silent forward of your message, so its header says it came from you ("Forwarded from <your name>") and it can't be mistaken for the guest's own messages. If your list message was itself a forward, its header would name the original source, so a `📤 群发 · Clients` line goes first; an album becomes one labelled line. When a guest replies to the message, their reply shows under that copy. Copies held back by Telegram's rate limit appear when that guest next writes, just above their message.
 
 Guest topics always stay one-to-one, because a guest's replies come back to their own topic. Keep conversations between your admin accounts out of list topics: every message there is sent.
 
