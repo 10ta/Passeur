@@ -187,7 +187,7 @@ async function selfCheck(app) {
   const { cfg, tg } = app;
   const lines = [];
   const ok = (cond, good, bad) => lines.push(cond ? `✅ ${good}` : `⚠️ ${bad}`);
-  const botId = Number.parseInt(cfg.token.split(':')[0], 10);
+  const { botId } = cfg;
 
   const chat = await tg.call('getChat', { chat_id: cfg.groupId }).catch(() => null);
   ok(chat?.is_forum, '群已开启话题 (Topics)', '群未开启话题：群设置 → Topics 打开');

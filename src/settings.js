@@ -11,7 +11,7 @@ export const SETTINGS = [
   {
     key: 'forward_source', label: '转发来源', env: 'FORWARD_SOURCE', def: 'all', scopes: ['global', 'topic'],
     options: [['all', '保留'], ['channel', '仅频道'], ['none', '隐藏']],
-    help: '转发来的消息发给访客时，是否保留“转发自…”。来源是任一管理员账号（含开了转发隐私的）或本群时，总是隐藏。',
+    help: '转发来的消息发给访客时，是否保留“转发自…”。来源是任一管理员账号（含开了转发隐私的）、本群或 bot 自己时，总是隐藏。',
   },
   {
     key: 'receipts', label: '送达回执', env: 'RECEIPTS', def: 'fail', scopes: ['global', 'topic'],
@@ -120,8 +120,9 @@ export async function getSetting(app, key, topicId) {
 
 /**
  * Whether to forward (keep "Forwarded from …") instead of copy. Messages that
- * originate from any admin account or the admin group are always copied, so
- * forwarding never reveals the admins. An admin with forward privacy shows up
+ * originate from any admin account, the admin group or the bot itself (a guest
+ * message forwarded from another topic) are always copied, so forwarding never
+ * reveals the admins or shows "Forwarded from <bot>". An admin with forward privacy shows up
  * as `hidden_user` with only a name, so names are matched too: the sender's
  * own name plus every admin name seen in the group (rememberAdmin).
  */
@@ -131,7 +132,8 @@ export async function keepForwardSource(app, msg, topicId) {
   const mode = await getSetting(app, 'forward_source', topicId);
   if (mode === 'none') return false;
   if (mode === 'channel') return origin.type === 'channel';
-  if (origin.type === 'user' && app.cfg.adminIds.has(origin.sender_user?.id)) return false;
+  // The bot itself: e.g. an admin forwarding a guest's message (a bot copy) from one topic to another.
+  if (origin.type === 'user' && (app.cfg.adminIds.has(origin.sender_user?.id) || origin.sender_user?.id === app.cfg.botId)) return false;
   if (origin.type === 'chat' && origin.sender_chat?.id === app.cfg.groupId) return false;
   if (origin.type === 'hidden_user') return !(await isAdminName(app, origin.sender_user_name, msg.from));
   return true;

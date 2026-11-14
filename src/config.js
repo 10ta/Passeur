@@ -22,6 +22,7 @@ export function loadConfig(env) {
   const groupId = int(env.GROUP_ID, 0);
   return {
     token: String(env.BOT_TOKEN ?? ''),
+    botId: Number.parseInt(String(env.BOT_TOKEN ?? '').split(':')[0], 10) || 0, // the token starts with the bot's user id
     webhookSecret: String(env.WEBHOOK_SECRET ?? ''),
     adminIds,
     groupId, // 0 = setup mode: only /id works

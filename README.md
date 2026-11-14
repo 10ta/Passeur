@@ -117,7 +117,7 @@ Start a message with `//` to keep it inside the topic: a note between your admin
 
 ### Forward something to a guest from account 1
 
-From any chat, **Forward** → pick the admin group → pick the guest's topic. The guest receives it like a normal forward, with "Forwarded from" the original source. Your own accounts never show: a message that originates from any admin account or the admin group is copied instead, including admins whose forward privacy hides their account (matched by name). To hide sources, change **Forward source** in `/settings` (globally or for one session).
+From any chat, **Forward** → pick the admin group → pick the guest's topic. The guest receives it like a normal forward, with "Forwarded from" the original source. Your own accounts never show: a message that originates from any admin account, the admin group or the bot itself (say, a guest's message you forward from one topic to another) is copied instead, including admins whose forward privacy hides their account (matched by name). To hide sources, change **Forward source** in `/settings` (globally or for one session).
 
 ### Reply to a specific message
 

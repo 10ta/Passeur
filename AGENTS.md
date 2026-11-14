@@ -105,7 +105,7 @@ There is no linter; match the existing style. Deeper design notes and measured c
 - `node -e … "$value"` treats a negative number like `-100123` as a node option; pass values through files or `scripts/env.mjs`.
 - Tests: Telegram JSON never contains undefined keys, so `isRelayable` checks values, not `in`; test album items must carry `photo`/`video` like real ones.
 - The fake D1 batch returns `results` only for statements starting with `SELECT`, like D1.
-- Forwarding keeps "Forwarded from" (default `forward_source = all`); `keepForwardSource` must keep copying messages whose origin is any admin account or the admin group, or the admins are revealed.
+- Forwarding keeps "Forwarded from" (default `forward_source = all`); `keepForwardSource` must keep copying messages whose origin is any admin account, the admin group or the bot itself (`cfg.botId`, e.g. a guest's bot copy forwarded between topics), or the admins are revealed / guests see "Forwarded from <bot>".
 - Admins with forward privacy appear as `hidden_user` (name only). `rememberAdmin` stores each admin's display name (settings scope `a`, written only on change) from group messages, DMs to the bot and `/check`; `isAdminName` matches NFC-normalized names against them and the sender, and looks up still-unknown admins with `getChatMember`.
 - Settings can carry `legacy` value maps (e.g. `receipts`: `1`→`fail`, `0`→`off` from the 👌/👀 version); they apply to `.env` and to stored rows.
 - Legacy `FORWARD_CHANNEL_POSTS`: only `1` means anything (= `channel`); `0` was the old template default and must stay ignored, or it would override the new `all` default in existing `.env` files.

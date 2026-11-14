@@ -246,6 +246,7 @@ test('forward source: kept by default (any origin), never for admin or own-group
     [{ type: 'hidden_user', sender_user_name: 'X' }, 'forwardMessage'],
     [{ type: 'user', sender_user: { id: ADMIN2 } }, 'copyMessage'],
     [{ type: 'chat', sender_chat: { id: GROUP } }, 'copyMessage'],
+    [{ type: 'user', sender_user: { id: 999, is_bot: true, first_name: 'Passeur' } }, 'copyMessage'], // a bot copy forwarded from another topic
     [undefined, 'copyMessage'],
   ];
   for (const [origin, method] of cases) {
@@ -1317,4 +1318,15 @@ test('list_mirror shows in list sessions only, not in guest sessions', async () 
   assert.ok(g.buttons().some(([, d]) => d === `st:${t}:list_mirror`));
   await g.press('st:o:500');
   assert.ok(!g.buttons().some(([, d]) => d.endsWith(':list_mirror')));
+});
+
+test('a guest message forwarded from one topic into a list topic reaches members as a copy, not "Forwarded from Passeur"', async () => {
+  const s = setup();
+  const t = await listSetup(s, [9101]);
+  await listCb(s, t, 9101);
+  s.tg.clear();
+  await s.send(inTopic(t, ADMIN1, { forward_origin: { type: 'user', sender_user: { id: 999, is_bot: true, first_name: 'Passeur' } } }));
+  await s.flush();
+  assert.equal(deliveries(s).length, 1);
+  assert.equal(s.tg.of('forwardMessage').filter((c) => c.params.chat_id !== GROUP).length, 0);
 });
