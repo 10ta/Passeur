@@ -20,6 +20,11 @@ export const SETTINGS = [
     help: '发送成功不打扰；发送失败时在话题里回一条说明原因。「不提醒」时失败也只记日志。',
   },
   {
+    key: 'list_mirror', label: '群发抄送', env: 'LIST_MIRROR', def: 'all', scopes: ['global', 'topic'], sessions: 'list',
+    options: [['all', '全部抄送'], ['reply', '仅回复时补上'], ['off', '关']],
+    help: '群发后在每个收件人的话题里转发一份（显示“转发自 你”）。「仅回复时补上」：谁回复了才补进谁的话题。「关」：不抄送。',
+  },
+  {
     key: 'topic_status', label: '话题状态图标', env: 'TOPIC_STATUS', def: '1', scopes: ['global'], flag: true,
     options: [['1', '开'], ['0', '关']],
     help: '访客发来消息后，他的话题显示“待回复”图标，你的回复送达后恢复。侧边栏一眼看出谁在等。',
@@ -151,7 +156,8 @@ async function sessionName(app, topicId) {
 
 async function panel(app, topicId) {
   const scope = topicId ? 'topic' : 'global';
-  const defs = SETTINGS.filter((s) => s.scopes.includes(scope));
+  const isList = topicId ? Boolean(await app.db.getList(topicId)) : false;
+  const defs = SETTINGS.filter((s) => s.scopes.includes(scope) && (!topicId || !s.sessions || (s.sessions === 'list') === isList));
   const lines = topicId
     ? [`⚙️ 会话设置：${esc(await sessionName(app, topicId))}`, '未单独设置的项跟随全局。', '']
     : ['⚙️ 全局设置', '单个会话的设置在下方「💬 会话设置」里。', ''];
@@ -165,7 +171,7 @@ async function panel(app, topicId) {
       callback_data: `st:${topicId || 'g'}:${def.key}`,
     }]);
   }
-  if (topicId && (await app.db.getList(topicId))) {
+  if (isList) {
     rows.push([{ text: '🗑 移除名单', callback_data: `st:x:${topicId}` }]);
   }
   rows.push(topicId

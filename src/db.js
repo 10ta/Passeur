@@ -152,8 +152,8 @@ export function createDb(d1) {
       if (!rows.length) return Promise.resolve();
       const t = now();
       return d1.batch(rows.map((r) =>
-        d1.prepare('INSERT OR REPLACE INTO list_pending (user_id, list_msg_id, list_topic_id, guest_msg_id, is_album, label, created_at, fwd) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-          .bind(r.user_id, r.list_msg_id, r.list_topic_id, r.guest_msg_id, r.is_album, r.label, t, r.fwd ?? 0)));
+        d1.prepare('INSERT OR REPLACE INTO list_pending (user_id, list_msg_id, list_topic_id, guest_msg_id, is_album, label, created_at, fwd, msg_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .bind(r.user_id, r.list_msg_id, r.list_topic_id, r.guest_msg_id, r.is_album, r.label, t, r.fwd ?? 0, r.msg_ids ?? null)));
     },
     /** A guest's pending mirrors, oldest first (primary-key prefix; usually empty). */
     pendingFor: (userId) => all('SELECT * FROM list_pending WHERE user_id = ? ORDER BY created_at, list_msg_id', userId),

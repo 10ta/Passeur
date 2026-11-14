@@ -134,7 +134,7 @@ A topic is a recipient list: a guest's own topic reaches that one guest, a **lis
 1. `/newlist Clients` creates the topic `📤 Clients` with a panel inside. Tick guests (☐/☑); each tap is saved at once, up to 24 people. `/list` in that topic brings the panel back.
 2. Post or forward anything into `📤 Clients` — text, media, albums. It is copied to every member who isn't blocked.
 3. Nothing happens when everyone got it; otherwise the bot replies with who didn't and why.
-4. Each recipient's own topic gets a silent forward of your message, so its header says it came from you ("Forwarded from <your name>") and it can't be mistaken for the guest's own messages. If your list message was itself a forward, its header would name the original source, so a `📤 群发 · Clients` line goes first; an album becomes one labelled line. When a guest replies to the message, their reply shows under that copy. Copies held back by Telegram's rate limit appear when that guest next writes, just above their message.
+4. Each recipient's own topic gets a silent forward of your message (albums as a whole), so its header reads "Forwarded from <your name>" and nothing else is added: no label, no button. When a guest replies to the message, their reply shows under that forward. Forwards held back by Telegram's rate limit appear when that guest next writes, just above their message. The **群发抄送** setting (global or per list) switches this to *only when the guest replies* or *off*.
 
 Guest topics always stay one-to-one, because a guest's replies come back to their own topic. Keep conversations between your admin accounts out of list topics: every message there is sent.
 
@@ -147,6 +147,7 @@ Send `/settings` in **General**. The panel shows the global settings; **💬 会
 | Setting | Global | Per topic | Options |
 |---|---|---|---|
 | Forward source | ✅ | ✅ | keep (default) · channels only · hide |
+| List mirrors (群发抄送) | ✅ | ✅ (lists) | all (default) · only on reply · off |
 | Topic status icon | ✅ | ❌ | on (default) · off |
 | New-guest captcha | ✅ | ❌ | on (default) · off |
 | Guest rate limit | ✅ | ❌ | 10 · 20 (default) · 60 per minute · off |
@@ -174,7 +175,7 @@ Only accounts in `ADMIN_IDS` can use them; other group members are ignored. The 
 
 ## 🔧 Configuration
 
-Connection settings live in `.env` (template: [`.env.example`](.env.example)); `update.sh` pushes them to the Worker as secrets on every run, so edit `.env` and re-run rather than changing them in the dashboard. The last six rows are only starting values: the `/settings` panel overrides them (see [Change settings](#change-settings)), resolved as topic → panel → `.env` → default.
+Connection settings live in `.env` (template: [`.env.example`](.env.example)); `update.sh` pushes them to the Worker as secrets on every run, so edit `.env` and re-run rather than changing them in the dashboard. The last seven rows are only starting values: the `/settings` panel overrides them (see [Change settings](#change-settings)), resolved as topic → panel → `.env` → default.
 
 | Name | Required | Default | Description |
 |---|---|---|---|
@@ -190,6 +191,7 @@ Connection settings live in `.env` (template: [`.env.example`](.env.example)); `
 | `RATE_LIMIT_PER_MIN` | ❌ | `20` | Messages per guest per minute; `0` = off |
 | `FORWARD_SOURCE` | ❌ | `all` | `all` / `channel` / `none`: keep "Forwarded from" for forwarded messages (legacy `FORWARD_CHANNEL_POSTS=1` = `channel`) |
 | `RETENTION_DAYS` | ❌ | `90` | How long reply/edit links between messages are kept |
+| `LIST_MIRROR` | ❌ | `all` | `all` / `reply` / `off`: forward list messages into each recipient's topic |
 | `TOPIC_STATUS` | ❌ | `1` | ❗ icon on topics whose guest is waiting for an answer |
 | `RECEIPTS` | ❌ | `fail` | `fail`: reply in the topic only when a delivery fails · `off`: never |
 
@@ -292,7 +294,7 @@ npm run build
 - A guest's message sent before passing the captcha is kept only if it was the first one (one album item at most).
 - Broadcast sends a single message; a replied-to album broadcasts its first item.
 - Only a leading `//` makes a note; anything else in a topic is sent. The health check runs every 5 minutes, so a short outage can go unreported.
-- List topics: at most 24 members (two Bot API calls each, deliver and mirror, within the free plan's 50 per invocation); edits are not synced; every send marks each recipient's topic unread; the reply link only shows when the guest uses Reply; with several unmirrored messages, only the latest 3 from the past 48 hours (plus the one replied to) are filled in.
+- List topics: at most 24 members (two Bot API calls each, deliver and mirror, within the free plan's 50 per invocation); a mirror is a bot message, so it can't sit on your side of the chat like in a private chat; when your list message is itself a forward, its header names the original source, just like something the guest forwarded (use 群发抄送 = only on reply / off if that matters); edits are not synced; every send marks each recipient's topic unread; the reply link only shows when the guest uses Reply; with several unmirrored messages, only the latest 3 from the past 48 hours (plus the one replied to) are filled in.
 - Admin text starting with `/` is treated as a command, not sent.
 - A flood from one guest still costs one Worker request per message even when dropped.
 

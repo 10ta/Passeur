@@ -634,8 +634,8 @@ test('/settings in General shows global settings with their source', async () =>
   assert.match(p.text, /转发来源<\/b>：保留（默认）/);
   assert.match(p.text, /新访客验证<\/b>：关（\.env）/);
   assert.deepEqual(p.reply_markup.inline_keyboard.map((r) => r[0].callback_data),
-    ['st:g:forward_source', 'st:g:receipts', 'st:g:topic_status', 'st:g:verify', 'st:g:rate_limit', 'st:g:retention_days', 'st:s:0']);
-  assert.equal(p.reply_markup.inline_keyboard[3][0].text, '新访客验证：关（.env） ▸', 'button shows the effective value');
+    ['st:g:forward_source', 'st:g:receipts', 'st:g:list_mirror', 'st:g:topic_status', 'st:g:verify', 'st:g:rate_limit', 'st:g:retention_days', 'st:s:0']);
+  assert.equal(p.reply_markup.inline_keyboard[4][0].text, '新访客验证：关（.env） ▸', 'button shows the effective value');
 });
 
 test('global panel cycles values, overrides .env, and "默认" falls back again', async () => {
@@ -1138,7 +1138,7 @@ test('service messages in the admin group are never relayed', async () => {
 
 // ---------------------------------------------------------------- list mirrors
 
-test('24 members with a forwarded message: all delivered, labelled mirrors fit the budget, rest pending', async () => {
+test('24 members with a forwarded message: all delivered and all mirrored within 50 calls', async () => {
   const s = setup();
   const t = await listSetup(s, [8001]);
   const ins = s.d1.raw.prepare('INSERT INTO users (user_id, name, verified, topic_id, created_at) VALUES (?, ?, 1, ?, 0)');
@@ -1150,9 +1150,8 @@ test('24 members with a forwarded message: all delivered, labelled mirrors fit t
   await s.send(inTopic(t, ADMIN1, { forward_origin: { type: 'channel', chat: { id: -9 } } }));
   await s.flush();
   assert.equal(s.tg.of('forwardMessage').filter((c) => c.params.chat_id !== GROUP).length, 24, 'forwarded to every guest');
+  assert.equal(mirrors(s).length, 24);
   assert.ok(s.tg.calls.length <= 50, `calls: ${s.tg.calls.length}`);
-  assert.equal(mirrors(s).length, mirrorLabels(s).length, 'never a label without its content');
-  assert.equal(mirrors(s).length + s.rows('SELECT * FROM list_pending').length, 24);
 });
 
 test('a list message is mirrored into each member topic as a silent forward (shows who sent it)', async () => {
@@ -1172,22 +1171,19 @@ test('a list message is mirrored into each member topic as a silent forward (sho
   assert.equal(s.tg.of('editForumTopic').length, 0, 'a mirror neither sets nor clears the waiting icon');
 });
 
-test('a forwarded list message is mirrored with a label line first (its header names the original source)', async () => {
+test('mirrors are forwards only: no label lines, no buttons (forwarded originals included)', async () => {
   const s = setup();
   const t = await listSetup(s, [8151]);
   await listCb(s, t, 8151);
   s.tg.clear();
-  const m = inTopic(t, ADMIN1, { forward_origin: { type: 'channel', chat: { id: -9 } } });
-  await s.send(m);
+  await s.send(inTopic(t, ADMIN1, { forward_origin: { type: 'channel', chat: { id: -9 } } }));
+  await s.send(inTopic(t, ADMIN1, { text: 'typed' }));
   await s.flush();
-  const inTopic500 = s.tg.calls.filter((c) => c.params.chat_id === GROUP && c.params.message_thread_id === 500).map((c) => c.method);
-  assert.deepEqual(inTopic500, ['sendMessage', 'forwardMessage']);
-  const label = mirrorLabels(s)[0].params;
-  assert.equal(label.text, '📤 群发 · 客户');
-  assert.equal(label.disable_notification, true);
-  assert.deepEqual(label.reply_markup.inline_keyboard[0][0], { text: '查看原消息', url: `https://t.me/c/1234/${t}/${m.message.message_id}` });
-  const map = s.row('SELECT topic_msg_id FROM msg_map WHERE guest_id = 8151 AND dir = 1');
-  assert.ok(map, 'paired with the forwarded content, not the label');
+  const inTopic500 = s.tg.calls.filter((c) => c.params.chat_id === GROUP && c.params.message_thread_id === 500);
+  assert.deepEqual(inTopic500.map((c) => c.method), ['forwardMessage', 'forwardMessage']);
+  assert.ok(inTopic500.every((c) => !c.params.reply_markup));
+  assert.equal(mirrorLabels(s).length, 0);
+  assert.equal(s.rows('SELECT * FROM msg_map WHERE guest_id = 8151 AND dir = 1').length, 2, 'both pair for reply threading');
 });
 
 test('a guest reply to a list message threads under its mirror; an admin reply to the mirror reaches the guest copy', async () => {
@@ -1237,7 +1233,7 @@ test('fill on reply: latest 3 within 48 h, plus an older one if it is the one re
   const s = setup();
   await s.send(guest(8401));
   const now = Math.floor(Date.now() / 1000);
-  const ins = s.d1.raw.prepare('INSERT INTO list_pending VALUES (8401, ?, 900, ?, 0, ?, ?, 0)');
+  const ins = s.d1.raw.prepare('INSERT INTO list_pending VALUES (8401, ?, 900, ?, 0, ?, ?, 0, NULL)');
   ins.run(11, 111, '旧', now - 5 * 86400); // too old
   ins.run(12, 112, 'A', now - 4000);
   ins.run(13, 113, 'B', now - 3000);
@@ -1255,7 +1251,7 @@ test('fill on reply: latest 3 within 48 h, plus an older one if it is the one re
   assert.deepEqual(mirrors(s).map((c) => c.params.message_id), [21, 22]);
 });
 
-test('an album is mirrored as one labelled line; /forget clears pending mirrors', async () => {
+test('an album is mirrored as a whole forwarded album; /forget clears pending mirrors', async () => {
   const s = setup();
   const t = await listSetup(s, [8501]);
   await listCb(s, t, 8501);
@@ -1263,14 +1259,62 @@ test('an album is mirrored as one labelled line; /forget clears pending mirrors'
   const ids = [nextMsgId(), nextMsgId()];
   await Promise.all(ids.map((id) => s.send(inTopic(t, ADMIN1, { message_id: id, media_group_id: 'M1', text: undefined, photo: [{}] }))));
   await s.flush();
-  assert.equal(mirrors(s).length, 0);
-  const mir = mirrorLabels(s);
+  const mir = s.tg.of('forwardMessages').filter((c) => c.params.chat_id === GROUP);
   assert.equal(mir.length, 1);
-  assert.equal(mir[0].params.text, '📤 群发相册 · 客户');
+  assert.deepEqual(mir[0].params.message_ids, ids);
   assert.equal(mir[0].params.message_thread_id, 500);
+  assert.equal(mir[0].params.disable_notification, true);
+  assert.equal(mirrorLabels(s).length, 0);
+  assert.ok(s.row('SELECT * FROM msg_map WHERE guest_id = 8501 AND dir = 1'), 'album paired by its first item');
 
-  s.d1.raw.exec("INSERT INTO list_pending VALUES (8501, 1, 900, 2, 0, 'x', 0, 0)");
+  s.d1.raw.exec("INSERT INTO list_pending VALUES (8501, 1, 900, 2, 0, 'x', 0, 0, NULL)");
   await s.send({ callback_query: { id: 'q', from: { id: ADMIN1 }, data: 'fg:500:r',
     message: { message_id: 4444, chat: { id: GROUP, type: 'supergroup' } } } });
   assert.equal(s.rows('SELECT * FROM list_pending').length, 0);
+});
+
+test('list_mirror = reply: nothing posted at send time; the replied message is filled in on reply', async () => {
+  const s = setup();
+  const t = await listSetup(s, [8601, 8602]);
+  for (const id of [8601, 8602]) await listCb(s, t, id);
+  await stCb(s, t, 'list_mirror'); // 默认 -> all
+  await stCb(s, t, 'list_mirror'); // all -> reply
+  s.tg.clear();
+  await s.send(inTopic(t, ADMIN1));
+  await s.flush();
+  assert.equal(deliveries(s).length, 2);
+  assert.equal(mirrors(s).length, 0, 'topics untouched');
+  const pend = s.row('SELECT * FROM list_pending WHERE user_id = 8601');
+  s.tg.clear();
+  await s.send(guest(8601, { reply_to_message: { message_id: pend.guest_msg_id } }));
+  assert.equal(mirrors(s).length, 1);
+  assert.equal(mirrors(s)[0].params.message_thread_id, 500);
+  const mirrorId = s.row('SELECT topic_msg_id FROM msg_map WHERE guest_id = 8601 AND dir = 1').topic_msg_id;
+  assert.equal(deliveriesToTopic(s)[0].params.reply_parameters.message_id, mirrorId);
+});
+
+test('list_mirror = off (global): no mirrors and nothing pending', async () => {
+  const s = setup({ LIST_MIRROR: 'off' });
+  const t = await listSetup(s, [8701]);
+  await listCb(s, t, 8701);
+  s.tg.clear();
+  await s.send(inTopic(t, ADMIN1));
+  await s.flush();
+  assert.equal(deliveries(s).length, 1);
+  assert.equal(mirrors(s).length, 0);
+  assert.equal(s.rows('SELECT * FROM list_pending').length, 0);
+  s.tg.clear();
+  await s.send(guest(8701));
+  assert.equal(mirrors(s).length, 0);
+});
+
+test('list_mirror shows in list sessions only, not in guest sessions', async () => {
+  const s = setup();
+  const t = await listSetup(s, [8801]);
+  await s.send(inGeneral(ADMIN1, cmd('/settings')));
+  const g = generalPanel(s);
+  await g.press(`st:o:${t}`);
+  assert.ok(g.buttons().some(([, d]) => d === `st:${t}:list_mirror`));
+  await g.press('st:o:500');
+  assert.ok(!g.buttons().some(([, d]) => d.endsWith(':list_mirror')));
 });
